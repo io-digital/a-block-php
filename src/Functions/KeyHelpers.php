@@ -1,6 +1,6 @@
 <?php
 
-namespace IODigital\LaravelZenotta\Functions;
+namespace IODigital\ABlockPHP\Functions;
 
 use FurqanSiddiqui\BIP39\BIP39;
 use IODigital\ABlockPHP\DTO\TransactionDTO;
@@ -139,7 +139,6 @@ class KeyHelpers
         }, $inputs));
 
         return self::constructAddress($signableTxIns);
-        //return sodium_bin2hex(hash('sha3-256', $signableTxIns, true));
     }
 
     private static function constructAddress(string $address): string
