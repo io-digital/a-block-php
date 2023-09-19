@@ -1,0 +1,18 @@
+{
+    "name": "io-digital/a-block-php",
+    "description": "Composer package for the a-block-chain",
+    "autoload": {
+        "psr-4": {
+            "IODigital\\ABlockPHP\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Rian Zietsman"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "furqansiddiqui/bip39-mnemonic-php": "^0.1.7"
+    }
+}
