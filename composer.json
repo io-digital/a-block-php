@@ -15,5 +15,7 @@
         "php": "^8.2",
         "furqansiddiqui/bip39-mnemonic-php": "^0.1.7",
         "guzzlehttp/guzzle": "^7.0"
-    }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
 }

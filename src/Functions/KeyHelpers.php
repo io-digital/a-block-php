@@ -4,6 +4,7 @@ namespace IODigital\ABlockPHP\Functions;
 
 use FurqanSiddiqui\BIP39\BIP39;
 use IODigital\ABlockPHP\DTO\TransactionDTO;
+use IODigital\ABlockPHP\Exceptions\KeypairNotDecryptedException;
 
 class KeyHelpers
 {
@@ -79,6 +80,10 @@ class KeyHelpers
         $nonce = sodium_hex2bin($nonce);
 
         $decrypted = sodium_crypto_secretbox_open($encryptedKeyPair, $nonce, $passPhrase);
+
+        if(!$decrypted) {
+            throw new KeypairNotDecryptedException();
+        }
 
         return [
             'publicKey' => substr($decrypted, 0, SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES),

@@ -2,12 +2,14 @@
 
 namespace IODigital\ABlockPHP;
 
-use Illuminate\Database\Eloquent\Collection;
 use IODigital\ABlockPHP\DTO\DecryptedWalletDTO;
 use IODigital\ABlockPHP\DTO\EncryptedWalletDTO;
 use IODigital\ABlockPHP\DTO\TransactionDTO;
 use IODigital\ABlockPHP\Functions\KeyHelpers;
 use IODigital\ABlockPHP\Traits\MakesRequests;
+use IODigital\ABlockPHP\Exceptions\PassPhraseNotSetException;
+use IODigital\ABlockPHP\Exceptions\ActiveWalletNotSetException;
+use GuzzleHttp\Client as HttpClient;
 
 class ABlockClient
 {
@@ -27,10 +29,13 @@ class ABlockClient
 
     private ?DecryptedWalletDTO $walletDecrypted = null;
 
+    private HttpClient $http;
+
     public function __construct(
         private string $computeHost,
         private string $intercomHost,
     ) {
+        $this->http = new HttpClient();
     }
 
     public function getComputeHost(): string
@@ -55,36 +60,13 @@ class ABlockClient
         $this->passPhraseHash = KeyHelpers::getPassPhraseHash($passPhrase);
     }
 
-    public function setWallet(EncryptedWalletDTO $wallet): void
-    {
-        $this->wallet = $wallet;
-        $this->openWallet($this->wallet);
-    }
-
     public function getPassPhrase(): string
     {
+        if(!$this->passPhraseHash) {
+            throw new PassPhraseNotSetException();
+        }
+
         return $this->passPhraseHash;
-    }
-
-    public function getKeypairs(): Collection
-    {
-        return $this->wallet->keypairs()->get();
-    }
-
-    public function getDecryptedKeypairByAddress(string $address): array
-    {
-        $keypair = $this->getKeypairs()->where('address', $address)->first();
-
-        return [
-            'address' => $address,
-            'version' => null,
-            ...$this->decryptKeypair($keypair),
-        ];
-    }
-
-    public function getAddresses(): array
-    {
-        return $this->wallet->keypairs()->get()->map(fn ($keypair) => $keypair->address)->toArray();
     }
 
     public function createWallet(bool $open = true): EncryptedWalletDTO
@@ -113,10 +95,6 @@ class ABlockClient
                 passPhrase: $this->getPassPhrase()
             );
 
-            if (!$masterKeyDecrypted) {
-                throw new \Exception('Cannot open wallet');
-            }
-
             // $this->masterPrivateKey = $masterKeyDecrypted['publicKey'];
             // $this->chainCode = $masterKeyDecrypted['secretKey'];
 
@@ -129,20 +107,52 @@ class ABlockClient
 
             return true;
         } catch (\Exception $e) {
-            return false;
+            throw $e;
         }
     }
 
-    public function createNewKeypair(): array
+    public function setWallet(EncryptedWalletDTO $wallet): void
     {
+        $this->wallet = $wallet;
+        $this->openWallet($this->wallet);
+    }
+
+    public function fetchBalance(array $addressList = [])
+    {
+        return $this->makeRequest(
+            apiRoute: self::ENDPOINT_FETCH_BALANCE,
+            payload: [
+                'address_list' => $addressList,
+            ]
+        );
+    }
+
+    // public function getDecryptedKeypairByAddress(string $address): array
+    // {
+    //     $keypair = $this->getKeypairs()->where('address', $address)->first();
+
+    //     return [
+    //         'address' => $address,
+    //         'version' => null,
+    //         ...$this->decryptKeypair($keypair),
+    //     ];
+    // }
+
+    // public function getAddresses(): array
+    // {
+    //     return $this->wallet->keypairs()->get()->map(fn ($keypair) => $keypair->address)->toArray();
+    // }
+
+    public function createKeypair(): array
+    {
+        if(!$this->walletDecrypted) {
+            throw new ActiveWalletNotSetException();
+        }
+
         return KeyHelpers::getNewKeypair(
             masterPrivateKey: $this->walletDecrypted->getMasterPrivateKey(),
             passPhrase: $this->getPassPhrase()
         );
-    }
-
-    public function saveTransaction()
-    {
     }
 
     public function decryptKeypair($encryptedKey)

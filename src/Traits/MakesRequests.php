@@ -5,13 +5,10 @@ declare(strict_types=1);
 namespace IODigital\ABlockPHP\Traits;
 
 use Exception;
-//use Illuminate\Support\Facades\Http;
-use GuzzleHttp\Client;
+use Illuminate\Http\Response;
 
 trait MakesRequests
 {
-    private Client $http;
-
     final public const POST = 'post';
 
     final public const GET = 'get';
@@ -49,11 +46,6 @@ trait MakesRequests
         ],
     ];
 
-    public function __construct()
-    {
-        $this->http = new Client();
-    }
-
     public function makeRequest(
         string $apiRoute,
         array $payload
@@ -84,26 +76,31 @@ trait MakesRequests
         $nonce = $this->getNonce($requestId, $difficulty);
 
         try {
-            $result = Http::withoutVerifying()
-                ->acceptJson()
-                ->withHeaders([
-                    'x-request-id' => $requestId,
-                    'x-nonce'      => $nonce,
-                ])
-                ->$requestMethod(
-                    $this->computeHost.'/'.$apiRoute,
-                    $payload
-                )->json();
+            $response = $this->http->request(
+                $requestMethod,
+                $this->computeHost.'/'.$apiRoute,
+                [
+                    'headers' => [
+                        'x-request-id' => $requestId,
+                        'x-nonce'      => $nonce,
+                    ],
+                    'json' => $payload
+                ]
+            );
 
-            if ($result['status'] === self::ERROR) {
-                throw new Exception($result['reason']);
+            if($response->getStatusCode() === Response::HTTP_OK) {
+                $jsonResponse = json_decode($response->getBody()->getContents(), true);
+
+                if ($jsonResponse['status'] === self::ERROR) {
+                    throw new Exception($result['reason']);
+                }
+
+                return $jsonResponse['content'];
             }
 
-            return $result['content'];
+            throw new Exception('An unexpected API error has occurred');
         } catch (Exception $e) {
-            $errorStr = "Error for API route $apiRoute: ".$e->getMessage();
-            \Log::error($errorStr);
-            throw new Exception($errorStr);
+            throw $e;
         }
     }
 
