@@ -8,8 +8,7 @@ class PaymentExpectationDTO
         private string $to,
         private PaymentAssetDTO $asset,
         private ?string $from = '',
-    ) {
-    }
+    ) {}
 
     public function formatForAPI(): array
     {
@@ -23,5 +22,15 @@ class PaymentExpectationDTO
     public function setFrom(string $address): void
     {
         $this->from = $address;
+    }
+
+    public function getAsset(): PaymentAssetDTO
+    {
+        return $this->asset;
+    }
+
+    public function getToAddress(): string
+    {
+        return $this->to;
     }
 }

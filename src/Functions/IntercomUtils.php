@@ -19,9 +19,26 @@ class IntercomUtils
         return [
             'key'       => $addressKey,
             'field'     => $addressField,
-            'signature' => KeyHelpers::createSignature(sodium_hex2bin($addressField), $keyPairForField['secretKey']),
+            'signature' => KeyHelpers::createSignature(
+                message: sodium_hex2bin($addressField),
+                secretKey: $keyPairForField['secretKey']
+            ),
             'publicKey' => sodium_bin2hex($keyPairForField['publicKey']),
             'value'     => $value,
+        ];
+    }
+
+    public static function generateIntercomGetBody(
+        string $addressKey,
+        array $keyPairForField
+    ): array {
+        return [
+            'key'       => $addressKey,
+            'publicKey' => sodium_bin2hex($keyPairForField['publicKey']),
+            'signature' => KeyHelpers::createSignature(
+                message: sodium_hex2bin($addressKey),
+                secretKey: $keyPairForField['secretKey']
+            ),
         ];
     }
 }

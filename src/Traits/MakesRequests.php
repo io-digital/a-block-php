@@ -25,6 +25,8 @@ trait MakesRequests
 
     final public const ENDPOINT_SET_DATA = 'set_data';
 
+    final public const ENDPOINT_GET_DATA = 'get_data';
+
     final public const COMPUTE_ENDPOINTS = [
         self::ENDPOINT_FETCH_BALANCE => [
             'difficulty'    => 0,
@@ -44,18 +46,23 @@ trait MakesRequests
         self::ENDPOINT_SET_DATA => [
             'requestMethod' => self::POST,
         ],
+        self::ENDPOINT_GET_DATA => [
+            'requestMethod' => self::POST,
+        ]
     ];
 
     public function makeRequest(
         string $apiRoute,
-        array $payload
+        array $payload,
+        ?string $host = null
     ): array {
         if (array_key_exists($apiRoute, self::COMPUTE_ENDPOINTS)) {
             return $this->makeComputeRequest(
                 apiRoute: $apiRoute,
                 requestMethod: self::COMPUTE_ENDPOINTS[$apiRoute]['requestMethod'],
                 difficulty: self::COMPUTE_ENDPOINTS[$apiRoute]['difficulty'],
-                payload: $payload
+                payload: $payload,
+                host: $host
             );
         } elseif (array_key_exists($apiRoute, self::INTERCOM_ENDPOINTS)) {
             return $this->makeIntercomRequest(
@@ -71,14 +78,17 @@ trait MakesRequests
         string $requestMethod,
         array $payload,
         int $difficulty = 4,
+        ?string $host = null
     ): array {
         $requestId = substr(sodium_bin2hex(random_bytes(32)), 0, 32);
         $nonce = $this->getNonce($requestId, $difficulty);
 
+        $finalHost = $host ?? $this->computeHost;
+
         try {
             $response = $this->http->request(
                 $requestMethod,
-                $this->computeHost.'/'.$apiRoute,
+                $finalHost.'/'.$apiRoute,
                 [
                     'headers' => [
                         'x-request-id' => $requestId,
@@ -108,41 +118,39 @@ trait MakesRequests
         string $apiRoute,
         string $requestMethod,
         array $payload,
-    ): string {
+    ): array {
         try {
-            $result = Http::withoutVerifying()
-                ->acceptJson()
-                ->$requestMethod(
-                    $this->getHostFromEndpoint($apiRoute).'/'.$apiRoute,
-                    $payload
-                );
+            $response = $this->http->request(
+                $requestMethod,
+                $this->intercomHost.'/'.$apiRoute,
+                [
+                    'json' => $payload
+                ]
+            );
 
-            dd($result->body());
-
-            if (is_array($result)) {
-                if ($result['status'] === self::ERROR) {
-                    throw new Exception($result['reason']);
-                }
-
-                return $result['content'];
+            if ($response->getStatusCode() === Response::HTTP_OK) {
+                $text = $response->getBody()->getContents();
+                $contents = json_decode($text, true);
+                return $contents ?? [$text];
             }
 
-            return $result;
+            throw new Exception('An error has occurred');
         } catch (Exception $e) {
-            $errorStr = "Error for API route $apiRoute: ".$e->getMessage();
-            \Log::error($errorStr);
-            throw new Exception($errorStr);
+            throw new Exception($e->getMessage());
         }
     }
 
+    // TEMP for dev
     public function makeProxyRequest(string $command, array $payload = []): array
     {
         try {
-            return Http::acceptJson()
-                ->post(
-                    config('zenotta.proxy_url')."/$command",
-                    $payload
-                )->json();
+            $response = $this->http->request(
+                self::POST,
+                config('a-block.proxy_url')."/$command",
+                ['json' => $payload]
+            );
+
+            return json_decode($response->getBody()->getContents(), true);
         } catch (ConnectionException $e) {
             dd($e->getMessage());
         }
@@ -160,18 +168,5 @@ trait MakesRequests
         }
 
         return $nonce;
-    }
-
-    private function getHostFromEndpoint(string $endpoint): string
-    {
-        switch ($endpoint) {
-            case self::ENDPOINT_SET_DATA:
-                return 'http://zen-intercom.zenotta.com:3002';//$this->intercomHost;
-            case self::ENDPOINT_FETCH_BALANCE:
-            case self::ENDPOINT_CREATE_RECEIPT_ASSET:
-            case self::ENDPOINT_CREATE_TRANSACTIONS:
-            default:
-                return $this->computeHost;
-        }
     }
 }

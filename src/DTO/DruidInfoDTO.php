@@ -6,13 +6,12 @@ use IODigital\ABlockPHP\Functions\KeyHelpers;
 
 class DruidInfoDTO
 {
-    private string $druid;
-
     public function __construct(
         private array $expectations,
+        private ?string $druid = null,
         private ?int $participants = 2
     ) {
-        $this->druid = KeyHelpers::generateDRUID();
+        $this->druid = $druid ?? KeyHelpers::generateDRUID();
     }
 
     public function formatForAPI(): array
