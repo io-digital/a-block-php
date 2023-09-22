@@ -12,6 +12,8 @@ class DruidInfoDTO
         private ?int $participants = 2
     ) {
         $this->druid = $druid ?? KeyHelpers::generateDRUID();
+
+        echo $this->druid ."\r\n";
     }
 
     public function formatForAPI(): array

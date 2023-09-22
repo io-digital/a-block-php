@@ -15,6 +15,7 @@ use IODigital\ABlockPHP\Traits\MakesRequests;
 use IODigital\ABlockPHP\Exceptions\PassPhraseNotSetException;
 use IODigital\ABlockPHP\Exceptions\ActiveWalletNotSetException;
 use GuzzleHttp\Client as HttpClient;
+use Exception;
 
 class ABlockClient
 {
@@ -22,6 +23,7 @@ class ABlockClient
 
     final public const TRANSACTION_STATUS_PENDING = 'pending';
     final public const TRANSACTION_STATUS_ACCEPTED = 'accepted';
+    final public const TRANSACTION_STATUS_REJECTED = 'rejected';
 
     private ?string $passPhraseHash = null;
 
@@ -130,7 +132,7 @@ class ABlockClient
                 'public_key'        => sodium_bin2hex($decryptedKeypair['publicKey']),
                 'signature'         => $signature,
                 'drs_tx_hash_spec'  => $defaultDrsTxHash ? 'Default' : 'Create',
-                'metadata'          => $metaDataStr,
+                'metadata'          => null,//$metaDataStr,
                 'version'           => null,
             ];
 
@@ -169,201 +171,283 @@ class ABlockClient
         return $this->doTransaction($payload);
     }
 
-    public function createReceiptBasedPayment(
-        // address to send $sendingAsset to
-        string $paymentAddress,
-        PaymentAssetDTO $sendingAsset,
+    public function createTradeRequest(
+        // the other party's address to send $myAsset to
+        string $otherPartyAddress,
+        PaymentAssetDTO $myAsset,
 
-        // address to get some $receivingAsset back into
-        string $receiveAddress,
-        PaymentAssetDTO $receivingAsset,
+        // my address to get some $otherPartyAsset back into
+        string $myAddress,
+        PaymentAssetDTO $otherPartyAsset,
 
-        // where to collect the sending asset from
-        array $senderKeypairs,
+        // where to collect $myAsset from
+        array $myKeypairs,
     ): array {
-        try {
-            $senderExpectation = new PaymentExpectationDTO(
-                to: $receiveAddress,
-                asset: $receivingAsset
-            );
+        $myExpectation = new PaymentExpectationDTO(
+            to: $myAddress,
+            asset: $otherPartyAsset
+        );
 
-            $receiverExpectation = new PaymentExpectationDTO(
-                to: $paymentAddress,
-                asset: $sendingAsset
-            );
+        $otherPartyExpectation = new PaymentExpectationDTO(
+            to: $otherPartyAddress,
+            asset: $myAsset
+        );
 
-            $druidInfo = new DruidInfoDTO(
-                expectations: [
-                    $senderExpectation->formatForAPI(),
-                ]
-            );
+        $druidInfo = new DruidInfoDTO(
+            expectations: [
+                $myExpectation->formatForAPI(),
+            ]
+        );
 
-            $payload = $this->makePaymentPayload(
-                senderKeypairs: $senderKeypairs,
-                paymentAsset: $sendingAsset,
-                paymentAddress: $paymentAddress,
-                excessAddress: $receiveAddress,
-                druidInfo: $druidInfo
-            );
+        $payload = $this->makePaymentPayloadNew(
+            myKeypairs: $myKeypairs,
+            myAsset: $myAsset,
+            otherPartyAddress: $otherPartyAddress,
+            excessAddress: $myAddress,
+            druidInfo: $druidInfo
+        );
 
-            $encryptedTransaction = $this->encryptTransaction($payload['createTx']);
+        $encryptedTransaction = $this->encryptTransaction($payload['createTx']);
 
-            $receiverExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
+        $otherPartyExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
 
-            $valuePayload = [
+        $sendBody = IntercomUtils::generateIntercomSetBody(
+            addressKey: $otherPartyAddress,
+            addressField: $myAddress,
+            keyPairForField: $this->decryptKeypair(
+                encryptedKey: $myKeypairs[$myAddress]['encryptedKey'],
+                nonce: $myKeypairs[$myAddress]['nonce']
+            ),
+            value: [
                 'druid'               => $druidInfo->getDruid(),
-                'senderExpectation'   => $senderExpectation->formatForAPI(),
-                'receiverExpectation' => $receiverExpectation->formatForAPI(),
-                'status'              => 'pending', // Status of the DDE transaction
+                'senderExpectation'   => $myExpectation->formatForAPI(),
+                'receiverExpectation' => $otherPartyExpectation->formatForAPI(),
+                'status'              => self::TRANSACTION_STATUS_PENDING,
                 'computeHost'         => $this->computeHost,
-            ];
+            ]
+        );
 
-            $keyPairForField = $this->decryptKeypair(
-                encryptedKey: $senderKeypairs[$receiveAddress]['encryptedKey'],
-                nonce: $senderKeypairs[$receiveAddress]['nonce']
-            );
+        $this->makeRequest(
+            apiRoute: self::ENDPOINT_SET_DATA,
+            payload: [$sendBody],
+        );
 
-            $sendBody = IntercomUtils::generateIntercomSetBody(
-                addressKey: $paymentAddress,
-                addressField: $receiveAddress,
-                keyPairForField: $keyPairForField,
-                value: $valuePayload
-            );
+        return $encryptedTransaction;
+    }
 
-            $this->makeRequest(
-                apiRoute: self::ENDPOINT_SET_DATA,
-                payload: [$sendBody],
-            );
+    private function makePaymentPayloadNew(
+        array $myKeypairs,
+        PaymentAssetDTO $myAsset,
+        string $otherPartyAddress,
+        string $excessAddress = null,
+        DruidInfoDTO $druidInfo = null
+    ): array {
+        $balance = $this->fetchBalance(array_keys($myKeypairs));
 
-            return $encryptedTransaction;
+        $amountAvailable = $myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_TOKEN ?
+            $balance['total']['tokens'] : $balance['total']['receipts'][$myAsset->getDrsTxHash()] ?? 0;
 
-        } catch (\Exception $e) {
-            throw $e;
+        if ($amountAvailable < $myAsset->getAmount()) {
+            throw new Exception('Insufficient funds');
         }
+
+        $excessAddress = $excessAddress ?? array_keys($myKeypairs)[0];
+
+        $inputs = $this->getInputsForTransaction(
+            myKeypairs: $myKeypairs,
+            myBalance: $balance,
+            myAsset: $myAsset,
+        );
+
+        $totalAmountGathered = $inputs['totalAmountGathered'];
+
+        $outputs = [
+            (new TransactionOutputDTO(
+                scriptPublicKey: $otherPartyAddress,
+                paymentAsset: $myAsset
+            ))->formatForAPI(),
+        ];
+
+        $hasExcess = $totalAmountGathered > $myAsset->getAmount();
+
+        if ($hasExcess) {
+            $excessAsset = clone $myAsset;
+            $excessAsset->setAmount($totalAmountGathered - $myAsset->getAmount());
+
+            array_push($outputs, (new TransactionOutputDTO(
+                scriptPublicKey: $excessAddress,
+                paymentAsset: $excessAsset
+            ))->formatForAPI());
+        }
+
+        return [
+            'createTx' => (new TransactionDTO(
+                inputs: $inputs['inputs'],
+                outputs: $outputs,
+                druidInfo: $druidInfo
+            )),
+            'excessAddressUsed' => $hasExcess,
+            'usedAddresses'     => $inputs['usedAddresses'],
+        ];
     }
 
     public function getPendingTransactions(
         array $keypairs,
+        ?array $encryptedTransactionMap = []
     ): array {
         try {
             $payload = [];
 
             foreach($keypairs as $address => $keypair) {
-                $keypairDecrypted = [
-                    'address' => $address,
-                    'version' => null,
-                    ...$this->decryptKeypair(
-                        encryptedKey: $keypair['encryptedKey'],
-                        nonce: $keypair['nonce']
-                    ),
-                ];
-
                 array_push($payload, IntercomUtils::generateIntercomGetBody(
                     addressKey: $address,
-                    keyPairForField: $keypairDecrypted
+                    keyPairForField: $this->getDecryptedKeypair($address, $keypair)
                 ));
             }
 
-            $result = $this->makeRequest(
+            $transactions = $this->makeRequest(
                 apiRoute: self::ENDPOINT_GET_DATA,
                 payload: $payload,
             );
 
-            return $result;
+            $validTransactions = array_filter($transactions, fn ($item) => IntercomUtils::isValidIntercomData($item['value']));
 
-            // $return = [];
+            $transactionsByStatus = array_reduce($validTransactions, function (array $carry, array $item) {
+                if(isset($carry[$item['value']['status']])) {
+                    array_push($carry[$item['value']['status']], $item['value']);
+                }
 
-            // foreach($result as $address => $pendingTransaction) {
-            //     if($pendingTransaction['value']['status'] !== self::TRANSACTION_STATUS_PENDING) {
-            //         continue;
-            //     }
+                return $carry;
+            }, [
+                self::TRANSACTION_STATUS_ACCEPTED => [],
+                self::TRANSACTION_STATUS_REJECTED => [],
+                self::TRANSACTION_STATUS_PENDING => []
+            ]);
 
-            //     $return[$address] = $pendingTransaction;
-            // }
+            if((bool) count($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED])) {
+                $transactionsToSend = [];
 
-            // return $return;
+                foreach($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED] as $acceptedTransaction) {
+                    $encryptedTransaction = $encryptedTransactionMap[$acceptedTransaction['druid']];
+
+                    echo $acceptedTransaction['druid'] ."\r\n";
+
+                    $decryptedTransaction = KeyHelpers::decryptTransaction(
+                        encryptedTransaction: $encryptedTransaction,
+                        passPhrase: $this->getPassPhrase()
+                    );
+
+                    if(!isset($decryptedTransaction['druid_info'])) {
+                        continue;
+                    }
+
+                    echo $decryptedTransaction['druid_info']['druid']."\r\n";
+
+                    $decryptedTransaction['druid_info']['expectations'] = [
+                        $acceptedTransaction['senderExpectation']
+                    ];
+
+                    array_push($transactionsToSend, $decryptedTransaction);
+                }
+
+                if(count($transactionsToSend)) {
+                    $result = $this->makeRequest(
+                        apiRoute: self::ENDPOINT_CREATE_TRANSACTIONS,
+                        payload: $transactionsToSend,
+                        //host: $host
+                    );
+
+                    dd($result);
+                }
+            }
+
+            return $validTransactions;
+
         } catch (\Exception $e) {
             throw $e;
         }
+
+        return $validTransactions;
     }
 
+    // I AM BOB, the original receiver
     public function acceptPendingTransaction(
         string $druid,
         array $keypairs,
-        array $pendingTransactions
     ): array {
+        try {
+            $pendingTransactions = $this->getPendingTransactions($keypairs);
+            $pendingTransaction = reset($pendingTransactions)['value'];
 
-        // we are now the original receiver, so the context switches around. So here we are Bob, the sender
-        $pendingTransaction = reset($pendingTransactions)['value'];
+            if($pendingTransaction['druid'] !== $druid) {
+                throw new Exception('Provided DRUID mismatch');
+            }
 
-        if($pendingTransaction['druid'] !== $druid) {
-            throw new Exception('Provided DRUID mismatch');
+            $pendingTransaction['status'] = self::TRANSACTION_STATUS_ACCEPTED;
+
+            $otherPartyAssetType = $this->getAssetType($pendingTransaction['receiverExpectation']);
+
+            $myExpectation = new PaymentExpectationDTO(
+                to: $pendingTransaction['receiverExpectation']['to'],
+                from: $pendingTransaction['receiverExpectation']['from'],
+                asset: new PaymentAssetDTO(
+                    assetType: $otherPartyAssetType,
+                    amount: $pendingTransaction['receiverExpectation']['asset'][$otherPartyAssetType]['amount'],
+                    drsTxHash: $otherPartyAssetType === PaymentAssetDTO::ASSET_TYPE_RECEIPT ? $pendingTransaction['receiverExpectation']['asset'][$otherPartyAssetType]['drs_tx_hash'] : null
+                )
+            );
+
+            $myAssetType = $this->getAssetType($pendingTransaction['senderExpectation']);
+
+            $otherPartyExpectation = new PaymentExpectationDTO(
+                to: $pendingTransaction['senderExpectation']['to'],
+                asset: new PaymentAssetDTO(
+                    assetType: $myAssetType,
+                    amount: $pendingTransaction['senderExpectation']['asset'][$myAssetType]['amount'],
+                    drsTxHash: $myAssetType === PaymentAssetDTO::ASSET_TYPE_RECEIPT ? $pendingTransaction['senderExpectation']['asset'][$myAssetType]['drs_tx_hash'] : null
+                )
+            );
+
+            $druidInfo = new DruidInfoDTO(
+                druid: $druid,
+                expectations: [
+                    $myExpectation->formatForAPI()
+                ]
+            );
+
+            $payload = $this->makePaymentPayloadNew(
+                myKeypairs: $keypairs,
+                myAsset: $otherPartyExpectation->getAsset(),
+                otherPartyAddress: $otherPartyExpectation->getToAddress(),
+                excessAddress: $myExpectation->getToAddress(),
+                druidInfo: $druidInfo
+            );
+
+            $rs = $this->doTransaction(payload: $payload, host: $pendingTransaction['computeHost']);
+
+            $otherPartyExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
+
+            $sendBody = IntercomUtils::generateIntercomSetBody(
+                addressKey: $otherPartyExpectation->getToAddress(),
+                addressField: $myExpectation->getToAddress(),
+                keyPairForField: $this->decryptKeypair(
+                    encryptedKey: $keypairs[$myExpectation->getToAddress()]['encryptedKey'],
+                    nonce: $keypairs[$myExpectation->getToAddress()]['nonce']
+                ),
+                value: [
+                    ...$pendingTransaction,
+                    "senderExpectation" => $myExpectation->formatForAPI(),
+                    "receiverExpectation" => $otherPartyExpectation->formatForAPI()
+                ]
+            );
+
+            return $this->makeRequest(
+                apiRoute: self::ENDPOINT_SET_DATA,
+                payload: [$sendBody],
+            );
+        } catch (Exception $e) {
+            throw $e;
         }
-
-        $pendingTransaction['status'] = self::TRANSACTION_STATUS_ACCEPTED;
-
-        $senderAssetType = array_keys($pendingTransaction['receiverExpectation']['asset'])[0];
-
-        $senderExpectation = new PaymentExpectationDTO(
-            to: $pendingTransaction['receiverExpectation']['to'],
-            from: $pendingTransaction['receiverExpectation']['from'],
-            asset: new PaymentAssetDTO(
-                assetType: $senderAssetType,
-                amount: $pendingTransaction['receiverExpectation']['asset'][$senderAssetType]['amount'],
-                drsTxHash: $senderAssetType === PaymentAssetDTO::ASSET_TYPE_RECEIPT ? $pendingTransaction['receiverExpectation']['asset'][$senderAssetType]['drs_tx_hash'] : null
-            )
-        );
-
-        $receiverAssetType = array_keys($pendingTransaction['senderExpectation']['asset'])[0];
-
-        $receiverExpectation = new PaymentExpectationDTO(
-            to: $pendingTransaction['senderExpectation']['to'],
-            asset: new PaymentAssetDTO(
-                assetType: $receiverAssetType,
-                amount: $pendingTransaction['senderExpectation']['asset'][$receiverAssetType]['amount'],
-                drsTxHash: $receiverAssetType === PaymentAssetDTO::ASSET_TYPE_RECEIPT ? $pendingTransaction['senderExpectation']['asset'][$senderAssetType]['drs_tx_hash'] : null
-            )
-        );
-
-        $druidInfo = new DruidInfoDTO(
-            druid: $druid,
-            expectations: [
-                $receiverExpectation->formatForAPI(), // is this right way round?
-            ]
-        );
-
-        $payload = $this->makePaymentPayload(
-            senderKeypairs: $keypairs,
-            paymentAsset: $receiverExpectation->getAsset(),
-            paymentAddress: $receiverExpectation->getToAddress(),
-            excessAddress: $senderExpectation->getToAddress(),
-            druidInfo: $druidInfo
-        );
-
-        $rs = $this->doTransaction(payload: $payload, host: $pendingTransaction['computeHost']);
-
-        $receiverExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
-
-        $keyPairForField = $this->decryptKeypair(
-            encryptedKey: $keypairs[$senderExpectation->getToAddress()]['encryptedKey'],
-            nonce: $keypairs[$senderExpectation->getToAddress()]['nonce']
-        );
-
-        $sendBody = IntercomUtils::generateIntercomSetBody(
-            addressKey: $receiverExpectation->getToAddress(),
-            addressField: $senderExpectation->getToAddress(),
-            keyPairForField: $keyPairForField,
-            value: [
-                ...$pendingTransaction,
-                "senderExpectation" => $senderExpectation->formatForAPI(),
-                "receiverExpectation" => $receiverExpectation->formatForAPI()
-            ]
-        );
-
-        return$this->makeRequest(
-            apiRoute: self::ENDPOINT_SET_DATA,
-            payload: [$sendBody],
-        );
     }
 
     private function makePaymentPayload(
@@ -385,7 +469,7 @@ class ABlockClient
         $excessAddress = $excessAddress ?? array_keys($balance['address_list'])[0];
 
         $inputs = $this->getInputsForTransaction(
-            keyPairs: $senderKeypairs,
+            keypairs: $senderKeypairs,
             balance: $balance,
             paymentAsset: $paymentAsset,
         );
@@ -425,9 +509,9 @@ class ABlockClient
     }
 
     private function getInputsForTransaction(
-        array $keyPairs,
-        array $balance,
-        PaymentAssetDTO $paymentAsset
+        array $myKeypairs,
+        array $myBalance,
+        PaymentAssetDTO $myAsset
     ): array {
         $totalAmountGathered = 0;
         $usedAddresses = [];
@@ -435,21 +519,14 @@ class ABlockClient
         $addressVersion = null;
         $inputs = [];
 
-        foreach ($balance['address_list'] as $address => $outPoints) {
+        foreach ($myBalance['address_list'] as $address => $outPoints) {
             $usedOutpointsCount = 0;
-            $keypair = $keyPairs[$address];
-            $keypairDecrypted = [
-                'address' => $address,
-                'version' => null,
-                ...$this->decryptKeypair(
-                    encryptedKey: $keypair['encryptedKey'],
-                    nonce: $keypair['nonce']
-                ),
-            ];
+            $keypair = $myKeypairs[$address];
+            $keypairDecrypted = $this->getDecryptedKeypair(address: $address, keypair: $keypair);
 
             foreach ($outPoints as $outPointArr) {
-                if ($totalAmountGathered < $paymentAsset->getAmount()
-                    && isset($outPointArr['value'][$paymentAsset->getAssetType()])) {
+                if ($totalAmountGathered < $myAsset->getAmount()
+                    && isset($outPointArr['value'][$myAsset->getAssetType()])) {
                     $signableData = $this->getSignableAssetHash($outPointArr['out_point']);
 
                     $signature = $this->constructSignature(
@@ -467,7 +544,7 @@ class ABlockClient
                         'previous_out' => $outPointArr['out_point'],
                     ]);
 
-                    $totalAmountGathered += $outPointArr['value'][$paymentAsset->getAssetType()]['amount'];
+                    $totalAmountGathered += $outPointArr['value'][$myAsset->getAssetType()]['amount'];
 
                     if (! in_array($address, $usedAddresses)) {
                         array_push($usedAddresses, $address);
@@ -534,8 +611,6 @@ class ABlockClient
         }
     }
 
-
-
     public function createKeypair(): array
     {
         if(!$this->walletDecrypted) {
@@ -546,6 +621,11 @@ class ABlockClient
             masterPrivateKey: $this->walletDecrypted->getMasterPrivateKey(),
             passPhrase: $this->getPassPhrase()
         );
+    }
+
+    private function getAssetType(array $expectation): string
+    {
+        return array_keys($expectation['asset'])[0];
     }
 
     private function getDecryptedKeypair($address, $keypair): array

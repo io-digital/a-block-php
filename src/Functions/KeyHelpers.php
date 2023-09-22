@@ -103,6 +103,21 @@ class KeyHelpers
         ];
     }
 
+    public static function decryptTransaction(array $encryptedTransaction, string $passPhrase): array
+    {
+        $decryptedTransaction = sodium_crypto_secretbox_open(
+            sodium_base642bin($encryptedTransaction['save'], SODIUM_BASE64_VARIANT_ORIGINAL),
+            sodium_hex2bin($encryptedTransaction['nonce']),
+            $passPhrase
+        );
+
+        if(!$decryptedTransaction) {
+            throw new KeypairNotDecryptedException();
+        }
+
+        return json_decode($decryptedTransaction, true);
+    }
+
     public static function getPassPhraseHash(string $passPhrase): string
     {
         return substr(hash('sha3-256', $passPhrase), 0, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
@@ -185,7 +200,7 @@ class KeyHelpers
             ],
             [
                 'type'  => 'PubKeyHash',
-                'value' => self::constructAddress($publicKeyData),
+                'value' => self::constructAddress(sodium_hex2bin($publicKeyData)),
             ],
             [
                 'type'  => 'Op',

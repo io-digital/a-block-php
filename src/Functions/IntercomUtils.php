@@ -41,4 +41,9 @@ class IntercomUtils
             ),
         ];
     }
+
+    public static function isValidIntercomData(array $item): bool
+    {
+        return !array_diff_key(array_flip(['druid', 'senderExpectation', 'receiverExpectation', 'status', 'computeHost']), $item);
+    }
 }
