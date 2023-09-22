@@ -162,13 +162,13 @@ class ABlockClient
         );
 
         $payload = $this->makePaymentPayload(
-            senderKeypairs: $senderKeypairs,
-            paymentAsset: $paymentAsset,
-            paymentAddress: $paymentAddress,
+            myKeypairs: $senderKeypairs,
+            myAsset: $paymentAsset,
+            otherPartyAddress: $paymentAddress,
             excessAddress: $excessAddress
         );
 
-        return $this->doTransaction($payload);
+        return $this->doTransaction([($payload['createTx'])->formatForAPI()]);
     }
 
     public function createTradeRequest(
@@ -199,7 +199,7 @@ class ABlockClient
             ]
         );
 
-        $payload = $this->makePaymentPayloadNew(
+        $payload = $this->makePaymentPayload(
             myKeypairs: $myKeypairs,
             myAsset: $myAsset,
             otherPartyAddress: $otherPartyAddress,
@@ -235,7 +235,7 @@ class ABlockClient
         return $encryptedTransaction;
     }
 
-    private function makePaymentPayloadNew(
+    private function makePaymentPayload(
         array $myKeypairs,
         PaymentAssetDTO $myAsset,
         string $otherPartyAddress,
@@ -291,6 +291,7 @@ class ABlockClient
         ];
     }
 
+    //Not sure I agree with this - accepted transactions are processed in this function, as per the JS lib
     public function getPendingTransactions(
         array $keypairs,
         ?array $encryptedTransactionMap = []
@@ -330,8 +331,6 @@ class ABlockClient
                 foreach($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED] as $acceptedTransaction) {
                     $encryptedTransaction = $encryptedTransactionMap[$acceptedTransaction['druid']];
 
-                    echo $acceptedTransaction['druid'] ."\r\n";
-
                     $decryptedTransaction = KeyHelpers::decryptTransaction(
                         encryptedTransaction: $encryptedTransaction,
                         passPhrase: $this->getPassPhrase()
@@ -341,8 +340,6 @@ class ABlockClient
                         continue;
                     }
 
-                    echo $decryptedTransaction['druid_info']['druid']."\r\n";
-
                     $decryptedTransaction['druid_info']['expectations'] = [
                         $acceptedTransaction['senderExpectation']
                     ];
@@ -351,18 +348,11 @@ class ABlockClient
                 }
 
                 if(count($transactionsToSend)) {
-                    $result = $this->makeRequest(
-                        apiRoute: self::ENDPOINT_CREATE_TRANSACTIONS,
-                        payload: $transactionsToSend,
-                        //host: $host
-                    );
-
-                    dd($result);
+                    $result = $this->doTransaction(payload: $transactionsToSend);
                 }
             }
 
-            return $validTransactions;
-
+            return $transactionsByStatus[self::TRANSACTION_STATUS_PENDING];
         } catch (\Exception $e) {
             throw $e;
         }
@@ -370,14 +360,13 @@ class ABlockClient
         return $validTransactions;
     }
 
-    // I AM BOB, the original receiver
     public function acceptPendingTransaction(
         string $druid,
         array $keypairs,
     ): array {
         try {
             $pendingTransactions = $this->getPendingTransactions($keypairs);
-            $pendingTransaction = reset($pendingTransactions)['value'];
+            $pendingTransaction = reset($pendingTransactions);
 
             if($pendingTransaction['druid'] !== $druid) {
                 throw new Exception('Provided DRUID mismatch');
@@ -415,7 +404,7 @@ class ABlockClient
                 ]
             );
 
-            $payload = $this->makePaymentPayloadNew(
+            $payload = $this->makePaymentPayload(
                 myKeypairs: $keypairs,
                 myAsset: $otherPartyExpectation->getAsset(),
                 otherPartyAddress: $otherPartyExpectation->getToAddress(),
@@ -423,7 +412,7 @@ class ABlockClient
                 druidInfo: $druidInfo
             );
 
-            $rs = $this->doTransaction(payload: $payload, host: $pendingTransaction['computeHost']);
+            $this->doTransaction(payload: [($payload['createTx'])->formatForAPI()], host: $pendingTransaction['computeHost']);
 
             $otherPartyExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
 
@@ -448,64 +437,6 @@ class ABlockClient
         } catch (Exception $e) {
             throw $e;
         }
-    }
-
-    private function makePaymentPayload(
-        array $senderKeypairs,
-        PaymentAssetDTO $paymentAsset,
-        string $paymentAddress,
-        string $excessAddress = null,
-        DruidInfoDTO $druidInfo = null
-    ): array {
-        $balance = $this->fetchBalance(array_keys($senderKeypairs));
-
-        $amountAvailable = $paymentAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_TOKEN ?
-            $balance['total']['tokens'] : $balance['total']['receipts'][$paymentAsset->getDrsTxHash()] ?? 0;
-
-        if ($amountAvailable < $paymentAsset->getAmount()) {
-            throw new Exception('Insufficient funds');
-        }
-
-        $excessAddress = $excessAddress ?? array_keys($balance['address_list'])[0];
-
-        $inputs = $this->getInputsForTransaction(
-            keypairs: $senderKeypairs,
-            balance: $balance,
-            paymentAsset: $paymentAsset,
-        );
-
-        $totalAmountGathered = $inputs['totalAmountGathered'];
-
-        $outputs = [
-            (new TransactionOutputDTO(
-                scriptPublicKey: $paymentAddress,
-                paymentAsset: $paymentAsset
-            ))->formatForAPI(),
-        ];
-
-        $hasExcess = $totalAmountGathered > $paymentAsset->getAmount();
-
-        if ($hasExcess) {
-            $excessAsset = clone $paymentAsset;
-            $excessAsset->setAmount($totalAmountGathered - $paymentAsset->getAmount());
-
-            array_push($outputs, (new TransactionOutputDTO(
-                scriptPublicKey: $excessAddress,
-                paymentAsset: $excessAsset
-            ))->formatForAPI());
-        }
-
-        $payload = [
-            'createTx' => (new TransactionDTO(
-                inputs: $inputs['inputs'],
-                outputs: $outputs,
-                druidInfo: $druidInfo
-            )),
-            'excessAddressUsed' => $hasExcess,
-            'usedAddresses'     => $inputs['usedAddresses'],
-        ];
-
-        return $payload;
     }
 
     private function getInputsForTransaction(
@@ -573,14 +504,11 @@ class ABlockClient
     ): array {
         $result = $this->makeRequest(
             apiRoute: self::ENDPOINT_CREATE_TRANSACTIONS,
-            payload: [($payload['createTx'])->formatForAPI()],
+            payload: $payload,
             host: $host
         );
 
-        return [
-            'usedAddresses' => $payload['usedAddresses'],
-            'result'        => $result,
-        ];
+        return $result;
     }
 
     public function createTokenPayment(
@@ -593,18 +521,6 @@ class ABlockClient
                 amount: $amount,
                 assetType: PaymentAssetDTO::ASSET_TYPE_TOKEN
             );
-
-            dd($paymentAsset);
-
-            // $payload = $this->makePaymentPayload(
-            //     paymentAsset: $paymentAsset,
-            //     paymentAddress: $paymentAddress,
-            //     excessAddress: $excessAddress
-            // );
-
-            // return $this->doTransaction(
-            //     payload: $payload
-            // );
         } catch (Exception $e) {
             \Log::error($e->getMessage());
             throw $e;

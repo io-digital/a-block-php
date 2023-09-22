@@ -138,7 +138,6 @@ class KeyHelpers
         return 'DRUID0x'.self::getPassPhraseHash(sodium_bin2hex(random_bytes(32)));
     }
 
-    // if there are issues, this is a place to check
     public static function constructTransactionInputAddress(array $inputs): string
     {
         $signableTxIns = implode('-', array_map(function ($input) {
