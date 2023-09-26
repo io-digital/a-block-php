@@ -4,6 +4,7 @@ namespace IODigital\ABlockPHP;
 
 use IODigital\ABlockPHP\DTO\DecryptedWalletDTO;
 use IODigital\ABlockPHP\DTO\EncryptedWalletDTO;
+use IODigital\ABlockPHP\DTO\EncryptedKeypairDTO;
 use IODigital\ABlockPHP\DTO\PaymentAssetDTO;
 use IODigital\ABlockPHP\DTO\TransactionDTO;
 use IODigital\ABlockPHP\DTO\TransactionOutputDTO;
@@ -38,11 +39,22 @@ class ABlockClient
         $this->http = new HttpClient();
     }
 
+    /**
+     * Set the pass phrase for the wallet to be created or opened.
+     *
+     * @param string $passPhrase
+     * @return void
+     */
     public function setPassPhrase(string $passPhrase): void
     {
         $this->passPhraseHash = KeyHelpers::getPassPhraseHash($passPhrase);
     }
 
+    /**
+     * Return the hashed passphrase set earlier. // COULD THIS BE PRIVATE?
+     *
+     * @return string
+     */
     public function getPassPhrase(): string
     {
         if(!$this->passPhraseHash) {
@@ -52,6 +64,12 @@ class ABlockClient
         return $this->passPhraseHash;
     }
 
+    /**
+     * Creates and returns an encrypted A-Block wallet. The return value includes the 12-word mnemonic
+     * Seed Phrase, which is to be stored securely by the owner of this wallet
+     *
+     * @return EncryptedWalletDTO
+     */
     public function createWallet(): EncryptedWalletDTO
     {
         $walletArr = KeyHelpers::initialiseFromPassphrase($this->getPassPhrase());
@@ -65,6 +83,13 @@ class ABlockClient
         return $walletDTO;
     }
 
+    /**
+     * Opens (decrypts) an existing wallet and returns true or false depending on if it was
+     * successful.
+     *
+     * @param EncryptedWalletDTO $wallet
+     * @return boolean
+     */
     public function openWallet(EncryptedWalletDTO $wallet): bool
     {
         try {
@@ -78,14 +103,43 @@ class ABlockClient
                 chainCode: $masterKeyDecrypted['secretKey']
             );
 
-            //$this->wallet = $wallet;
-
             return true;
         } catch (\Exception $e) {
             throw $e;
         }
     }
 
+    /**
+     * Creates and returns an encrypted keypair and associated address,
+     * using the decrypted wallet and supplied pass phrase
+     *
+     * @return array
+     */
+    public function createKeypair(): EncryptedKeypairDTO
+    {
+        if(!$this->walletDecrypted) {
+            throw new ActiveWalletNotSetException();
+        }
+
+        $keypairArr = KeyHelpers::getNewKeypair(
+            masterPrivateKey: $this->walletDecrypted->getMasterPrivateKey(),
+            passPhrase: $this->getPassPhrase()
+        );
+
+        return new EncryptedKeypairDTO(
+            address: $keypairArr['address'],
+            nonce: $keypairArr['nonce'],
+            content: $keypairArr['save']
+        );
+    }
+
+
+    /**
+     * Fetches the balance for the opened wallet, using the addresses to keypairs supplied in $addressList.
+     *
+     * @param array $addressList
+     * @return void
+     */
     public function fetchBalance(array $addressList = [])
     {
         return $this->makeRequest(
@@ -96,6 +150,17 @@ class ABlockClient
         );
     }
 
+    /**
+     * Creates a receipt asset at the address associated with the encrypted keypair. Returns the receipt.
+     *
+     * @param string $name - this is the name that will be merged in with supplied meta data (if any)
+     * @param string $encryptedKey - the encrypted keypair
+     * @param string $nonce - the nonce as returned by the keypair creation
+     * @param integer $amount - how many of these are we making
+     * @param boolean $defaultDrsTxHash - if false, a generic receipt is created. If not, a hash that identifies this receipt will be generated
+     * @param array|null $metaData - an optional key-value array of extra info
+     * @return array
+     */
     public function createReceiptAsset(
         string $name,
         string $encryptedKey,
@@ -132,7 +197,7 @@ class ABlockClient
                 'public_key'        => sodium_bin2hex($decryptedKeypair['publicKey']),
                 'signature'         => $signature,
                 'drs_tx_hash_spec'  => $defaultDrsTxHash ? 'Default' : 'Create',
-                'metadata'          => null,//$metaDataStr,
+                'metadata'          => $metaDataStr,
                 'version'           => null,
             ];
 
@@ -527,17 +592,6 @@ class ABlockClient
         }
     }
 
-    public function createKeypair(): array
-    {
-        if(!$this->walletDecrypted) {
-            throw new ActiveWalletNotSetException();
-        }
-
-        return KeyHelpers::getNewKeypair(
-            masterPrivateKey: $this->walletDecrypted->getMasterPrivateKey(),
-            passPhrase: $this->getPassPhrase()
-        );
-    }
 
     private function getAssetType(array $expectation): string
     {
@@ -590,7 +644,7 @@ class ABlockClient
         return '';
     }
 
-    public function constructSignature(string $message, string $secretKey): string
+    private function constructSignature(string $message, string $secretKey): string
     {
         return KeyHelpers::createSignature($message, $secretKey);
     }

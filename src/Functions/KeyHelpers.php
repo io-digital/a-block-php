@@ -55,7 +55,7 @@ class KeyHelpers
         ];
     }
 
-    public static function getNewKeypair(string $masterPrivateKey, string $passPhrase)
+    public static function getNewKeypair(string $masterPrivateKey, string $passPhrase): array
     {
         $keypairRaw = sodium_crypto_sign_seed_keypair($masterPrivateKey);
         $publicKey = sodium_crypto_sign_publickey($keypairRaw);
