@@ -51,11 +51,11 @@ class ABlockClient
     }
 
     /**
-     * Return the hashed passphrase set earlier. // COULD THIS BE PRIVATE?
+     * Return the hashed passphrase set earlier.
      *
      * @return string
      */
-    public function getPassPhrase(): string
+    private function getPassPhrase(): string
     {
         if(!$this->passPhraseHash) {
             throw new PassPhraseNotSetException();
@@ -70,9 +70,9 @@ class ABlockClient
      *
      * @return EncryptedWalletDTO
      */
-    public function createWallet(): EncryptedWalletDTO
+    public function createWallet(?string $seedPhrase = null): EncryptedWalletDTO
     {
-        $walletArr = KeyHelpers::initialiseFromPassphrase($this->getPassPhrase());
+        $walletArr = KeyHelpers::initialiseFromPassphrase($this->getPassPhrase(), $seedPhrase);
 
         $walletDTO = new EncryptedWalletDTO(
             masterKeyEncrypted: $walletArr['masterKeyEncrypted'],
@@ -115,7 +115,7 @@ class ABlockClient
      *
      * @return array
      */
-    public function createKeypair(): EncryptedKeypairDTO
+    public function createKeypair(array $existingAddresses = []): EncryptedKeypairDTO
     {
         if(!$this->walletDecrypted) {
             throw new ActiveWalletNotSetException();
@@ -123,7 +123,8 @@ class ABlockClient
 
         $keypairArr = KeyHelpers::getNewKeypair(
             masterPrivateKey: $this->walletDecrypted->getMasterPrivateKey(),
-            passPhrase: $this->getPassPhrase()
+            passPhrase: $this->getPassPhrase(),
+            existingAddresses: $existingAddresses
         );
 
         return new EncryptedKeypairDTO(
@@ -157,18 +158,18 @@ class ABlockClient
      * @param string $encryptedKey - the encrypted keypair
      * @param string $nonce - the nonce as returned by the keypair creation
      * @param integer $amount - how many of these are we making
-     * @param boolean $defaultDrsTxHash - if false, a generic receipt is created. If not, a hash that identifies this receipt will be generated
+     * @param boolean $defaultHash - if false, a generic receipt is created. If not, a hash that identifies this receipt will be generated
      * @param array|null $metaData - an optional key-value array of extra info
      * @return array
      */
-    public function createReceiptAsset(
+    public function createAsset(
         string $name,
         string $encryptedKey,
         string $nonce,
         int $amount,
-        bool $defaultDrsTxHash,
+        bool $defaultHash,
         ?array $metaData = [],
-    ): array {
+    ): PaymentAssetDTO {
         try {
             $decryptedKeypair = $this->decryptKeypair(
                 encryptedKey: $encryptedKey,
@@ -196,40 +197,37 @@ class ABlockClient
                 'script_public_key' => $address,
                 'public_key'        => sodium_bin2hex($decryptedKeypair['publicKey']),
                 'signature'         => $signature,
-                'drs_tx_hash_spec'  => $defaultDrsTxHash ? 'Default' : 'Create',
+                'drs_tx_hash_spec'  => $defaultHash ? 'Default' : 'Create',
                 'metadata'          => $metaDataStr,
                 'version'           => null,
             ];
 
-            return $this->makeRequest(
+            $result = $this->makeRequest(
                 apiRoute: self::ENDPOINT_CREATE_RECEIPT_ASSET,
                 payload: $payload
+            );
+
+            return new PaymentAssetDTO(
+                assetType: PaymentAssetDTO::ASSET_TYPE_RECEIPT,
+                amount: $amount,
+                drsTxHash: $result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_RECEIPT]['drs_tx_hash'],
+                metaData: json_decode($result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_RECEIPT]['metadata'], true)
             );
         } catch (\Exception $e) {
             throw $e;
         }
     }
 
-    public function createReceiptPayment(
+    public function sendAssetToAddress(
         array $senderKeypairs,
-        string $paymentAddress,
-        int $amount,
-        string $drsTxHash,
-        array $metaData = null,
+        string $address,
+        PaymentAssetDTO $asset,
         string $excessAddress = null,
-        string $druid
     ): array {
-        $paymentAsset = new PaymentAssetDTO(
-            amount: $amount,
-            drsTxHash: $drsTxHash,
-            metaData: $metaData,
-            assetType: PaymentAssetDTO::ASSET_TYPE_RECEIPT
-        );
-
         $payload = $this->makePaymentPayload(
             myKeypairs: $senderKeypairs,
-            myAsset: $paymentAsset,
-            otherPartyAddress: $paymentAddress,
+            myAsset: $asset,
+            otherPartyAddress: $address,
             excessAddress: $excessAddress
         );
 
@@ -540,7 +538,10 @@ class ABlockClient
                         'previous_out' => $outPointArr['out_point'],
                     ]);
 
-                    $totalAmountGathered += $outPointArr['value'][$myAsset->getAssetType()]['amount'];
+                    $thisAmount = isset($outPointArr['value'][$myAsset->getAssetType()]['amount']) ?
+                        $outPointArr['value'][$myAsset->getAssetType()]['amount'] : $outPointArr['value'][$myAsset->getAssetType()];
+
+                    $totalAmountGathered += $thisAmount;
 
                     if (! in_array($address, $usedAddresses)) {
                         array_push($usedAddresses, $address);
@@ -575,23 +576,6 @@ class ABlockClient
 
         return $result;
     }
-
-    public function createTokenPayment(
-        string $paymentAddress,
-        int $amount,
-        string $excessAddress = null
-    ): array {
-        try {
-            $paymentAsset = new PaymentAssetDTO(
-                amount: $amount,
-                assetType: PaymentAssetDTO::ASSET_TYPE_TOKEN
-            );
-        } catch (Exception $e) {
-            \Log::error($e->getMessage());
-            throw $e;
-        }
-    }
-
 
     private function getAssetType(array $expectation): string
     {

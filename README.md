@@ -80,7 +80,7 @@ $balance = $client->fetchBalance(
 ### Create a Receipt Asset at a specified address
 
 ```
-$receiptAssetArr = $client->createReceiptAsset(
+$receiptAssetArr = $client->createAsset(
     name: 'Some friendly identifier',
     encryptedKey: $encryptedKeypairDTO->getAddress(),
     nonce: $encryptedKeypairDTO->getNonce(),

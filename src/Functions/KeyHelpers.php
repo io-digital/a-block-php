@@ -11,9 +11,9 @@ class KeyHelpers
     /**
      * Returns array with seed phrase, nonce, save
      */
-    public static function initialiseFromPassphrase(string $passPhraseHash): array
+    public static function initialiseFromPassphrase(string $passPhraseHash, ?string $seedPhrase = null): array
     {
-        $generatedSeed = self::generateSeed();
+        $generatedSeed = $seedPhrase ?? self::generateSeed();
         $newMasterKey = self::generateMasterKey($generatedSeed, $passPhraseHash);
 
         $masterKeyEncryptedAndNonce = self::encryptMasterKey($newMasterKey, $passPhraseHash);
@@ -27,9 +27,9 @@ class KeyHelpers
         ];
     }
 
-    private static function generateMasterKey(string $seed, string $passPhraseHash): string
+    private static function generateMasterKey(string $seed, string $passPhraseHash, int $depth = 0): string
     {
-        $hash = hash_pbkdf2('sha512', $seed, $passPhraseHash, 2048, 64);
+        $hash = hash_pbkdf2('sha512', $seed, $passPhraseHash, 2048 + $depth, 64);
 
         return substr(hash_hmac('sha512', $hash, 'Bitcoin seed'), 0, 64);
     }
@@ -55,17 +55,26 @@ class KeyHelpers
         ];
     }
 
-    public static function getNewKeypair(string $masterPrivateKey, string $passPhrase): array
+    public static function getNewKeypair(string $masterPrivateKey, string $passPhrase, array $existingAddresses = []): array
     {
-        $keypairRaw = sodium_crypto_sign_seed_keypair($masterPrivateKey);
-        $publicKey = sodium_crypto_sign_publickey($keypairRaw);
+        $counter = count($existingAddresses);
+
+        do {
+            $seedKey = self::generateMasterKey($masterPrivateKey, $passPhrase, $counter);
+
+            $keypairRaw = sodium_crypto_sign_seed_keypair(substr($seedKey, 0, SODIUM_CRYPTO_SIGN_SEEDBYTES));
+            $publicKey = sodium_crypto_sign_publickey($keypairRaw);
+            $address = self::constructAddress($publicKey);
+            $counter ++;
+        } while (in_array($address, $existingAddresses));
+
         $privateKey = sodium_crypto_sign_secretkey($keypairRaw);
         $nonce = self::getNonce();
 
-        $save = sodium_crypto_secretbox($publicKey.$privateKey, $nonce, $passPhrase);
+        $save = sodium_crypto_secretbox($publicKey . $privateKey, $nonce, $passPhrase);
 
         return [
-            'address' => self::constructAddress($publicKey),
+            'address' => $address,
             'nonce'   => sodium_bin2hex($nonce),
             'save'    => sodium_bin2base64($save, SODIUM_BASE64_VARIANT_ORIGINAL),
         ];
@@ -135,7 +144,7 @@ class KeyHelpers
 
     public static function generateDRUID(): string
     {
-        return 'DRUID0x'.self::getPassPhraseHash(sodium_bin2hex(random_bytes(32)));
+        return 'DRUID0x' . self::getPassPhraseHash(sodium_bin2hex(random_bytes(32)));
     }
 
     public static function constructTransactionInputAddress(array $inputs): string
