@@ -141,7 +141,7 @@ class ABlockClient
      * @param array $addressList
      * @return void
      */
-    public function fetchBalance(array $addressList = [])
+    public function fetchBalance(array $addressList = []): array
     {
         return $this->makeRequest(
             apiRoute: self::ENDPOINT_FETCH_BALANCE,
@@ -182,10 +182,7 @@ class ABlockClient
                 'amount' => $amount,
             ]);
 
-            $signature = $this->constructSignature(
-                $signableAssetHash,
-                $decryptedKeypair['secretKey']
-            );
+            $signature = KeyHelpers::createSignature($signableAssetHash, $decryptedKeypair['secretKey']);
 
             $metaDataStr = json_encode([
                 ...$metaData,
@@ -270,7 +267,10 @@ class ABlockClient
             druidInfo: $druidInfo
         );
 
-        $encryptedTransaction = $this->encryptTransaction($payload['createTx']);
+        $encryptedTransaction = KeyHelpers::encryptTransaction(
+            transaction: $payload['createTx']->formatForAPI(),
+            passPhrase: $this->getPassPhrase()
+        );
 
         $otherPartyExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
 
@@ -521,12 +521,16 @@ class ABlockClient
             foreach ($outPoints as $outPointArr) {
                 if ($totalAmountGathered < $myAsset->getAmount()
                     && isset($outPointArr['value'][$myAsset->getAssetType()])) {
+
+                    // TODO - similar condition for tokens ?
+                    if($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_RECEIPT &&
+                        $outPointArr['value'][$myAsset->getAssetType()]['drs_tx_hash'] !== $myAsset->getDrsTxHash()) {
+                        continue;
+                    }
+
                     $signableData = $this->getSignableAssetHash($outPointArr['out_point']);
 
-                    $signature = $this->constructSignature(
-                        $signableData,
-                        $keypairDecrypted['secretKey']
-                    );
+                    $signature = KeyHelpers::createSignature($signableData, $keypairDecrypted['secretKey']);
 
                     array_push($inputs, [
                         'script_signature' => ['Pay2PkH' => [
@@ -540,6 +544,9 @@ class ABlockClient
 
                     $thisAmount = isset($outPointArr['value'][$myAsset->getAssetType()]['amount']) ?
                         $outPointArr['value'][$myAsset->getAssetType()]['amount'] : $outPointArr['value'][$myAsset->getAssetType()];
+
+                    $thisAmount = $outPointArr['value'][$myAsset->getAssetType()]['drs_tx_hash'] !== $myAsset->getDrsTxHash() ?
+                        0 : $outPointArr['value'][$myAsset->getAssetType()]['amount'];
 
                     $totalAmountGathered += $thisAmount;
 
@@ -603,14 +610,6 @@ class ABlockClient
         );
     }
 
-    private function encryptTransaction(TransactionDTO $transaction): array
-    {
-        return KeyHelpers::encryptTransaction(
-            transaction: $transaction,
-            passPhrase: $this->getPassPhrase()
-        );
-    }
-
     private function getSignableAssetHash(array $asset): string
     {
         if (isset($asset['n']) && isset($asset['t_hash'])) {
@@ -626,10 +625,5 @@ class ABlockClient
         }
 
         return '';
-    }
-
-    private function constructSignature(string $message, string $secretKey): string
-    {
-        return KeyHelpers::createSignature($message, $secretKey);
     }
 }

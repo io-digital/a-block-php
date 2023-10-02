@@ -3,7 +3,6 @@
 namespace IODigital\ABlockPHP\Functions;
 
 use FurqanSiddiqui\BIP39\BIP39;
-use IODigital\ABlockPHP\DTO\TransactionDTO;
 use IODigital\ABlockPHP\Exceptions\KeypairNotDecryptedException;
 
 class KeyHelpers
@@ -100,13 +99,13 @@ class KeyHelpers
         ];
     }
 
-    public static function encryptTransaction(TransactionDTO $transaction, string $passPhrase): array
+    public static function encryptTransaction(array $transaction, string $passPhrase): array
     {
         $nonce = self::getNonce();
-        $encryptedStr = sodium_crypto_secretbox(json_encode($transaction->formatForAPI()), $nonce, $passPhrase);
+        $encryptedStr = sodium_crypto_secretbox(json_encode($transaction), $nonce, $passPhrase);
 
         return [
-            'druid' => $transaction->getDruid(),
+            'druid' => $transaction['druid_info']['druid'],
             'nonce' => sodium_bin2hex($nonce),
             'save'  => sodium_bin2base64($encryptedStr, SODIUM_BASE64_VARIANT_ORIGINAL),
         ];
