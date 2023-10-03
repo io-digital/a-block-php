@@ -427,6 +427,29 @@ class ABlockClient
         string $druid,
         array $keypairs,
     ): array {
+        return $this->respondToPendingTransaction(
+            status: self::TRANSACTION_STATUS_ACCEPTED,
+            druid: $druid,
+            keypairs: $keypairs
+        );
+    }
+
+    public function rejectPendingTransaction(
+        string $druid,
+        array $keypairs,
+    ): array {
+        return $this->respondToPendingTransaction(
+            status: self::TRANSACTION_STATUS_REJECTED,
+            druid: $druid,
+            keypairs: $keypairs
+        );
+    }
+
+    private function respondToPendingTransaction(
+        string $status,
+        string $druid,
+        array $keypairs,
+    ): array {
         try {
             $pendingTransactions = $this->getPendingTransactions($keypairs);
             $pendingTransaction = reset($pendingTransactions);
@@ -435,7 +458,7 @@ class ABlockClient
                 throw new Exception('Provided DRUID mismatch');
             }
 
-            $pendingTransaction['status'] = self::TRANSACTION_STATUS_ACCEPTED;
+            $pendingTransaction['status'] = $status;
 
             $otherPartyAssetType = $this->getAssetType($pendingTransaction['receiverExpectation']);
 
@@ -460,24 +483,26 @@ class ABlockClient
                 )
             );
 
-            $druidInfo = new DruidInfoDTO(
-                druid: $druid,
-                expectations: [
-                    $myExpectation->formatForAPI()
-                ]
-            );
+            if($status === self::TRANSACTION_STATUS_ACCEPTED) {
+                $druidInfo = new DruidInfoDTO(
+                    druid: $druid,
+                    expectations: [
+                        $myExpectation->formatForAPI()
+                    ]
+                );
 
-            $payload = $this->makePaymentPayload(
-                myKeypairs: $keypairs,
-                myAsset: $otherPartyExpectation->getAsset(),
-                otherPartyAddress: $otherPartyExpectation->getToAddress(),
-                excessAddress: $myExpectation->getToAddress(),
-                druidInfo: $druidInfo
-            );
+                $payload = $this->makePaymentPayload(
+                    myKeypairs: $keypairs,
+                    myAsset: $otherPartyExpectation->getAsset(),
+                    otherPartyAddress: $otherPartyExpectation->getToAddress(),
+                    excessAddress: $myExpectation->getToAddress(),
+                    druidInfo: $druidInfo
+                );
 
-            $this->doTransaction(payload: [($payload['createTx'])->formatForAPI()], host: $pendingTransaction['computeHost']);
+                $this->doTransaction(payload: [($payload['createTx'])->formatForAPI()], host: $pendingTransaction['computeHost']);
 
-            $otherPartyExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
+                $otherPartyExpectation->setFrom(KeyHelpers::constructTransactionInputAddress($payload['createTx']->getInputs()));
+            }
 
             $sendBody = IntercomUtils::generateIntercomSetBody(
                 addressKey: $otherPartyExpectation->getToAddress(),
