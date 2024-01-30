@@ -64,7 +64,7 @@ class KeyHelpers
             $keypairRaw = sodium_crypto_sign_seed_keypair(substr($seedKey, 0, SODIUM_CRYPTO_SIGN_SEEDBYTES));
             $publicKey = sodium_crypto_sign_publickey($keypairRaw);
             $address = self::constructAddress($publicKey);
-            $counter ++;
+            $counter++;
         } while (in_array($address, $existingAddresses));
 
         $privateKey = sodium_crypto_sign_secretkey($keypairRaw);
@@ -89,7 +89,7 @@ class KeyHelpers
 
         $decrypted = sodium_crypto_secretbox_open($encryptedKeyPair, $nonce, $passPhrase);
 
-        if(!$decrypted) {
+        if (!$decrypted) {
             throw new KeypairNotDecryptedException();
         }
 
@@ -119,7 +119,7 @@ class KeyHelpers
             $passPhrase
         );
 
-        if(!$decryptedTransaction) {
+        if (!$decryptedTransaction) {
             throw new KeypairNotDecryptedException();
         }
 

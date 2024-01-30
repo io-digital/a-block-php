@@ -3,21 +3,10 @@
 namespace IODigital\ABlockPHP\Exceptions;
 
 use Illuminate\Http\Response;
+use Exception;
 
-class PassPhraseNotSetException extends ApplicationException
+class PassPhraseNotSetException extends Exception
 {
-    public function status(): int
-    {
-        return Response::HTTP_BAD_REQUEST;
-    }
-
-    public function help(): string
-    {
-        return 'Please set the pass phrase using `setPassPhrase()`';
-    }
-
-    public function error(): string
-    {
-        return 'Pass phrase not set';
-    }
+    protected $code = Response::HTTP_BAD_REQUEST;
+    protected $message = 'Pass phrase not set';
 }

@@ -3,21 +3,10 @@
 namespace IODigital\ABlockPHP\Exceptions;
 
 use Illuminate\Http\Response;
+use Exception;
 
-class ActiveWalletNotSetException extends ApplicationException
+class ActiveWalletNotSetException extends Exception
 {
-    public function status(): int
-    {
-        return Response::HTTP_BAD_REQUEST;
-    }
-
-    public function help(): string
-    {
-        return 'Please set the active wallet';
-    }
-
-    public function error(): string
-    {
-        return 'Active wallet not set';
-    }
+    protected $code = Response::HTTP_BAD_REQUEST;
+    protected $message = 'Active wallet not set';
 }

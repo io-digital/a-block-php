@@ -2,21 +2,21 @@
 
 namespace IODigital\ABlockPHP;
 
+use Exception;
+use GuzzleHttp\Client as HttpClient;
 use IODigital\ABlockPHP\DTO\DecryptedWalletDTO;
-use IODigital\ABlockPHP\DTO\EncryptedWalletDTO;
+use IODigital\ABlockPHP\DTO\DruidInfoDTO;
 use IODigital\ABlockPHP\DTO\EncryptedKeypairDTO;
+use IODigital\ABlockPHP\DTO\EncryptedWalletDTO;
 use IODigital\ABlockPHP\DTO\PaymentAssetDTO;
+use IODigital\ABlockPHP\DTO\PaymentExpectationDTO;
 use IODigital\ABlockPHP\DTO\TransactionDTO;
 use IODigital\ABlockPHP\DTO\TransactionOutputDTO;
-use IODigital\ABlockPHP\DTO\DruidInfoDTO;
-use IODigital\ABlockPHP\DTO\PaymentExpectationDTO;
-use IODigital\ABlockPHP\Functions\KeyHelpers;
-use IODigital\ABlockPHP\Functions\IntercomUtils;
-use IODigital\ABlockPHP\Traits\MakesRequests;
-use IODigital\ABlockPHP\Exceptions\PassPhraseNotSetException;
 use IODigital\ABlockPHP\Exceptions\ActiveWalletNotSetException;
-use GuzzleHttp\Client as HttpClient;
-use Exception;
+use IODigital\ABlockPHP\Exceptions\PassPhraseNotSetException;
+use IODigital\ABlockPHP\Functions\IntercomUtils;
+use IODigital\ABlockPHP\Functions\KeyHelpers;
+use IODigital\ABlockPHP\Traits\MakesRequests;
 
 class ABlockClient
 {
@@ -43,6 +43,7 @@ class ABlockClient
      * Set the pass phrase for the wallet to be created or opened.
      *
      * @param string $passPhrase
+     *
      * @return void
      */
     public function setPassPhrase(string $passPhrase): void
@@ -57,7 +58,7 @@ class ABlockClient
      */
     private function getPassPhrase(): string
     {
-        if(!$this->passPhraseHash) {
+        if (!$this->passPhraseHash) {
             throw new PassPhraseNotSetException();
         }
 
@@ -88,6 +89,7 @@ class ABlockClient
      * successful.
      *
      * @param EncryptedWalletDTO $wallet
+     *
      * @return boolean
      */
     public function openWallet(EncryptedWalletDTO $wallet): bool
@@ -117,7 +119,7 @@ class ABlockClient
      */
     public function createKeypair(array $existingAddresses = []): EncryptedKeypairDTO
     {
-        if(!$this->walletDecrypted) {
+        if (!$this->walletDecrypted) {
             throw new ActiveWalletNotSetException();
         }
 
@@ -139,6 +141,7 @@ class ABlockClient
      * Fetches the balance for the opened wallet, using the addresses to keypairs supplied in $addressList.
      *
      * @param array $addressList
+     *
      * @return void
      */
     public function fetchBalance(array $addressList = []): array
@@ -154,12 +157,13 @@ class ABlockClient
     /**
      * Creates a receipt asset at the address associated with the encrypted keypair. Returns the receipt.
      *
-     * @param string $name - this is the name that will be merged in with supplied meta data (if any)
-     * @param string $encryptedKey - the encrypted keypair
-     * @param string $nonce - the nonce as returned by the keypair creation
-     * @param integer $amount - how many of these are we making
-     * @param boolean $defaultHash - if false, a generic receipt is created. If not, a hash that identifies this receipt will be generated
-     * @param array|null $metaData - an optional key-value array of extra info
+     * @param string     $name         - this is the name that will be merged in with supplied meta data (if any)
+     * @param string     $encryptedKey - the encrypted keypair
+     * @param string     $nonce        - the nonce as returned by the keypair creation
+     * @param integer    $amount       - how many of these are we making
+     * @param boolean    $defaultHash  - if false, a generic receipt is created. If not, a hash that identifies this receipt will be generated
+     * @param array|null $metaData     - an optional key-value array of extra info
+     *
      * @return array
      */
     public function createAsset(
@@ -362,7 +366,7 @@ class ABlockClient
         try {
             $payload = [];
 
-            foreach($keypairs as $address => $keypair) {
+            foreach ($keypairs as $address => $keypair) {
                 array_push($payload, IntercomUtils::generateIntercomGetBody(
                     addressKey: $address,
                     keyPairForField: $this->getDecryptedKeypair($address, $keypair)
@@ -374,10 +378,10 @@ class ABlockClient
                 payload: $payload,
             );
 
-            $validTransactions = array_filter($transactions, fn ($item) => IntercomUtils::isValidIntercomData($item['value']));
+            $validTransactions = array_filter($transactions, fn($item) => IntercomUtils::isValidIntercomData($item['value']));
 
             $transactionsByStatus = array_reduce($validTransactions, function (array $carry, array $item) {
-                if(isset($carry[$item['value']['status']])) {
+                if (isset($carry[$item['value']['status']])) {
                     array_push($carry[$item['value']['status']], $item['value']);
                 }
 
@@ -385,13 +389,13 @@ class ABlockClient
             }, [
                 self::TRANSACTION_STATUS_ACCEPTED => [],
                 self::TRANSACTION_STATUS_REJECTED => [],
-                self::TRANSACTION_STATUS_PENDING => []
+                self::TRANSACTION_STATUS_PENDING  => [],
             ]);
 
-            if((bool) count($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED])) {
+            if ((bool) count($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED])) {
                 $transactionsToSend = [];
 
-                foreach($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED] as $acceptedTransaction) {
+                foreach ($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED] as $acceptedTransaction) {
                     $encryptedTransaction = $encryptedTransactionMap[$acceptedTransaction['druid']];
 
                     $decryptedTransaction = KeyHelpers::decryptTransaction(
@@ -399,18 +403,18 @@ class ABlockClient
                         passPhrase: $this->getPassPhrase()
                     );
 
-                    if(!isset($decryptedTransaction['druid_info'])) {
+                    if (!isset($decryptedTransaction['druid_info'])) {
                         continue;
                     }
 
                     $decryptedTransaction['druid_info']['expectations'] = [
-                        $acceptedTransaction['senderExpectation']
+                        $acceptedTransaction['senderExpectation'],
                     ];
 
                     array_push($transactionsToSend, $decryptedTransaction);
                 }
 
-                if(count($transactionsToSend)) {
+                if (count($transactionsToSend)) {
                     $result = $this->doTransaction(payload: $transactionsToSend);
                 }
             }
@@ -454,7 +458,7 @@ class ABlockClient
             $pendingTransactions = $this->getPendingTransactions($keypairs);
             $pendingTransaction = reset($pendingTransactions);
 
-            if($pendingTransaction['druid'] !== $druid) {
+            if ($pendingTransaction['druid'] !== $druid) {
                 throw new Exception('Provided DRUID mismatch');
             }
 
@@ -483,11 +487,11 @@ class ABlockClient
                 )
             );
 
-            if($status === self::TRANSACTION_STATUS_ACCEPTED) {
+            if ($status === self::TRANSACTION_STATUS_ACCEPTED) {
                 $druidInfo = new DruidInfoDTO(
                     druid: $druid,
                     expectations: [
-                        $myExpectation->formatForAPI()
+                        $myExpectation->formatForAPI(),
                     ]
                 );
 
@@ -513,8 +517,8 @@ class ABlockClient
                 ),
                 value: [
                     ...$pendingTransaction,
-                    "senderExpectation" => $myExpectation->formatForAPI(),
-                    "receiverExpectation" => $otherPartyExpectation->formatForAPI()
+                    "senderExpectation"   => $myExpectation->formatForAPI(),
+                    "receiverExpectation" => $otherPartyExpectation->formatForAPI(),
                 ]
             );
 
@@ -546,9 +550,8 @@ class ABlockClient
             foreach ($outPoints as $outPointArr) {
                 if ($totalAmountGathered < $myAsset->getAmount()
                     && isset($outPointArr['value'][$myAsset->getAssetType()])) {
-
                     // TODO - similar condition for tokens ?
-                    if($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_RECEIPT &&
+                    if ($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_RECEIPT &&
                         $outPointArr['value'][$myAsset->getAssetType()]['drs_tx_hash'] !== $myAsset->getDrsTxHash()) {
                         continue;
                     }
@@ -628,11 +631,15 @@ class ABlockClient
 
     private function decryptKeypair(string $encryptedKey, string $nonce): array
     {
-        return KeyHelpers::decryptKeypair(
-            encryptedKey: $encryptedKey,
-            nonce: $nonce,
-            passPhrase: $this->getPassPhrase()
-        );
+        try {
+            return KeyHelpers::decryptKeypair(
+                encryptedKey: $encryptedKey,
+                nonce: $nonce,
+                passPhrase: $this->getPassPhrase()
+            );
+        } catch (Exception $e) {
+            throw($e);
+        }
     }
 
     private function getSignableAssetHash(array $asset): string
