@@ -392,6 +392,8 @@ class ABlockClient
                 self::TRANSACTION_STATUS_PENDING  => [],
             ]);
 
+            $transactionsToDelete = [];
+
             if ((bool) count($transactionsByStatus[self::TRANSACTION_STATUS_ACCEPTED])) {
                 $transactionsToSend = [];
 
@@ -412,11 +414,47 @@ class ABlockClient
                     ];
 
                     array_push($transactionsToSend, $decryptedTransaction);
+                    array_push(
+                        $transactionsToDelete,
+                        $acceptedTransaction
+                    );
                 }
 
                 if (count($transactionsToSend)) {
                     $result = $this->doTransaction(payload: $transactionsToSend);
                 }
+            }
+
+            if ((bool) count($transactionsByStatus[self::TRANSACTION_STATUS_REJECTED])) {
+                foreach ($transactionsByStatus[self::TRANSACTION_STATUS_REJECTED] as $rejectedTransaction) {
+                    array_push(
+                        $transactionsToDelete,
+                        $rejectedTransaction
+                    );
+                }
+            }
+
+            if(count($transactionsToDelete)) {
+                $formattedTransactionsToDelete = [];
+
+                foreach($transactionsToDelete as $transactionToDelete) {
+                    array_push(
+                        $formattedTransactionsToDelete,
+                        IntercomUtils::generateIntercomDeleteBody(
+                            addressKey: $transactionToDelete['receiverExpectation']['to'],
+                            addressField: $transactionToDelete['senderExpectation']['to'],
+                            keyPairForField: $this->getDecryptedKeypair(
+                                $transactionToDelete['senderExpectation']['to'],
+                                $keypairs[$transactionToDelete['receiverExpectation']['to']]
+                            )
+                        )
+                    );
+                }
+
+                $rs = $this->makeRequest(
+                    apiRoute: self::ENDPOINT_DELETE_DATA,
+                    payload: $formattedTransactionsToDelete,
+                );
             }
 
             return $transactionsByStatus[self::TRANSACTION_STATUS_PENDING];

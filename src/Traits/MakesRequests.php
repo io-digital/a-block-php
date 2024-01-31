@@ -27,6 +27,8 @@ trait MakesRequests
 
     final public const ENDPOINT_GET_DATA = 'get_data';
 
+    final public const ENDPOINT_DELETE_DATA = 'del_data';
+
     final public const COMPUTE_ENDPOINTS = [
         self::ENDPOINT_FETCH_BALANCE => [
             'difficulty'    => 0,
@@ -47,6 +49,9 @@ trait MakesRequests
             'requestMethod' => self::POST,
         ],
         self::ENDPOINT_GET_DATA => [
+            'requestMethod' => self::POST,
+        ],
+        self::ENDPOINT_DELETE_DATA => [
             'requestMethod' => self::POST,
         ]
     ];
@@ -88,7 +93,7 @@ trait MakesRequests
         try {
             $response = $this->http->request(
                 $requestMethod,
-                $finalHost.'/'.$apiRoute,
+                $finalHost . '/' . $apiRoute,
                 [
                     'headers' => [
                         'x-request-id' => $requestId,
@@ -122,7 +127,7 @@ trait MakesRequests
         try {
             $response = $this->http->request(
                 $requestMethod,
-                $this->intercomHost.'/'.$apiRoute,
+                $this->intercomHost . '/' . $apiRoute,
                 [
                     'json' => $payload
                 ]
@@ -146,7 +151,7 @@ trait MakesRequests
         try {
             $response = $this->http->request(
                 self::POST,
-                config('a-block.proxy_url')."/$command",
+                config('a-block.proxy_url') . "/$command",
                 ['json' => $payload]
             );
 
