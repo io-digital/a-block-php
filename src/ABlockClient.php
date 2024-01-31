@@ -435,6 +435,7 @@ class ABlockClient
 
                 if (count($transactionsToSend)) {
                     $result = $this->doTransaction(payload: $transactionsToSend);
+                    dump($result);
                 }
             }
 
@@ -654,6 +655,7 @@ class ABlockClient
         array $payload,
         ?string $host = null
     ): array {
+        dump($payload);
         $result = $this->makeRequest(
             apiRoute: self::ENDPOINT_CREATE_TRANSACTIONS,
             payload: $payload,

@@ -8,9 +8,8 @@ class TransactionDTO
         private array $inputs,
         private array $outputs,
         private ?DruidInfoDTO $druidInfo,
-        private ?int $version = 2
-    ) {
-    }
+        private ?int $version = 6
+    ) {}
 
     public function formatForAPI(): array
     {
@@ -18,6 +17,7 @@ class TransactionDTO
             'version' => $this->version,
             'inputs' => $this->inputs,
             'outputs' => $this->outputs,
+            'fees' => [],
             'druid_info' => $this->druidInfo ? $this->druidInfo->formatForAPI() : null,
         ];
     }
