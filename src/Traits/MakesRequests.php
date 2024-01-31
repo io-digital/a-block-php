@@ -19,7 +19,7 @@ trait MakesRequests
 
     final public const ENDPOINT_FETCH_BALANCE = 'fetch_balance';
 
-    final public const ENDPOINT_CREATE_RECEIPT_ASSET = 'create_receipt_asset';
+    final public const ENDPOINT_CREATE_ITEM_ASSET = 'create_item_asset';
 
     final public const ENDPOINT_CREATE_TRANSACTIONS = 'create_transactions';
 
@@ -36,7 +36,7 @@ trait MakesRequests
             'difficulty'    => 0,
             'requestMethod' => self::POST,
         ],
-        self::ENDPOINT_CREATE_RECEIPT_ASSET => [
+        self::ENDPOINT_CREATE_ITEM_ASSET => [
             'difficulty'    => 0,
             'requestMethod' => self::POST,
         ],
@@ -116,7 +116,7 @@ trait MakesRequests
                 $finalHost . '/' . $apiRoute,
                 [
                     'headers' => [
-                        'x-request-id' => $requestId,
+                        'x-cache-id' => $requestId,
                         'x-nonce'      => $nonce,
                     ],
                     'json' => $payload
@@ -180,7 +180,7 @@ trait MakesRequests
                 $this->storageHost . '/' . $apiRoute,
                 [
                     'headers' => [
-                        'x-request-id' => $requestId,
+                        'x-cache-id' => $requestId,
                         'x-nonce'      => $nonce,
                     ],
                     'json' => $payload

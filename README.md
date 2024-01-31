@@ -11,8 +11,8 @@ Composer package for direct communication with A-Block's API
 
 - Create wallets
 - Create addresses/keypairs for wallets
-- Create receipt assets (A-Block's equivalent to NFTs) related to keypairs
-- Transfer assets (Receipts or Tokens) to another address
+- Create item assets (A-Block's equivalent to NFTs) related to keypairs
+- Transfer assets (Items or Tokens) to another address
 - Initiate and complete Dual Double Entry (DDE) using a DRUID to trade assets between addresses
 
 ## Installation
@@ -77,15 +77,15 @@ $balance = $client->fetchBalance(
 );
 ```
 
-### Create a Receipt Asset at a specified address
+### Create an Item Asset at a specified address
 
 ```
-$receiptAssetArr = $client->createAsset(
+$itemAssetArr = $client->createAsset(
     name: 'Some friendly identifier',
     encryptedKey: $encryptedKeypairDTO->getAddress(),
     nonce: $encryptedKeypairDTO->getNonce(),
     amount: 100,
-    defaultDrsTxHash: false, // make true to create generic receipts
+    defaultDrsTxHash: false, // make true to create generic items
     metaData: [
         'foo' => 'bar'
     ]

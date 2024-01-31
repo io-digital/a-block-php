@@ -6,15 +6,14 @@ class PaymentAssetDTO
 {
     public const ASSET_TYPE_TOKEN = 'Token';
 
-    public const ASSET_TYPE_RECEIPT = 'Receipt';
+    public const ASSET_TYPE_ITEM = 'Item';
 
     public function __construct(
         private string $assetType,
         private int $amount,
         private ?string $drsTxHash = null,
         private ?array $metaData = null
-    ) {
-    }
+    ) {}
 
     public function formatForAPI(): array
     {
@@ -23,7 +22,7 @@ class PaymentAssetDTO
                 return [
                     $this->assetType => $this->amount,
                 ];
-            case self::ASSET_TYPE_RECEIPT:
+            case self::ASSET_TYPE_ITEM:
                 return [
                     $this->assetType => [
                         'amount' => $this->amount,
