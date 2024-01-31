@@ -35,6 +35,7 @@ class ABlockClient
     public function __construct(
         private string $computeHost,
         private string $intercomHost,
+        private string $storageHost,
     ) {
         $this->http = new HttpClient();
     }
@@ -134,6 +135,18 @@ class ABlockClient
             nonce: $keypairArr['nonce'],
             content: $keypairArr['save']
         );
+    }
+
+    public function getBlockchainEntry(string $hash): array
+    {
+        try {
+            return $this->makeRequest(
+                apiRoute: self::ENDPOINT_GET_BLOCKCHAIN_ENTRY,
+                payload: $hash
+            );
+        } catch (\Exception $e) {
+            throw $e;
+        }
     }
 
 

@@ -23,6 +23,8 @@ trait MakesRequests
 
     final public const ENDPOINT_CREATE_TRANSACTIONS = 'create_transactions';
 
+    final public const ENDPOINT_GET_BLOCKCHAIN_ENTRY = 'blockchain_entry';
+
     final public const ENDPOINT_SET_DATA = 'set_data';
 
     final public const ENDPOINT_GET_DATA = 'get_data';
@@ -56,25 +58,43 @@ trait MakesRequests
         ]
     ];
 
+    final public const STORAGE_ENDPOINTS = [
+        self::ENDPOINT_GET_BLOCKCHAIN_ENTRY => [
+            'difficulty'    => 3,
+            'requestMethod' => self::POST,
+        ]
+    ];
+
     public function makeRequest(
         string $apiRoute,
-        array $payload,
+        array|string $payload,
         ?string $host = null
     ): array {
-        if (array_key_exists($apiRoute, self::COMPUTE_ENDPOINTS)) {
-            return $this->makeComputeRequest(
-                apiRoute: $apiRoute,
-                requestMethod: self::COMPUTE_ENDPOINTS[$apiRoute]['requestMethod'],
-                difficulty: self::COMPUTE_ENDPOINTS[$apiRoute]['difficulty'],
-                payload: $payload,
-                host: $host
-            );
-        } elseif (array_key_exists($apiRoute, self::INTERCOM_ENDPOINTS)) {
-            return $this->makeIntercomRequest(
-                apiRoute: $apiRoute,
-                requestMethod: self::INTERCOM_ENDPOINTS[$apiRoute]['requestMethod'],
-                payload: $payload
-            );
+        try {
+            if (array_key_exists($apiRoute, self::COMPUTE_ENDPOINTS)) {
+                return $this->makeComputeRequest(
+                    apiRoute: $apiRoute,
+                    requestMethod: self::COMPUTE_ENDPOINTS[$apiRoute]['requestMethod'],
+                    difficulty: self::COMPUTE_ENDPOINTS[$apiRoute]['difficulty'],
+                    payload: $payload,
+                    host: $host
+                );
+            } elseif (array_key_exists($apiRoute, self::INTERCOM_ENDPOINTS)) {
+                return $this->makeIntercomRequest(
+                    apiRoute: $apiRoute,
+                    requestMethod: self::INTERCOM_ENDPOINTS[$apiRoute]['requestMethod'],
+                    payload: $payload
+                );
+            } elseif (array_key_exists($apiRoute, self::STORAGE_ENDPOINTS)) {
+                return $this->makeStorageRequest(
+                    apiRoute: $apiRoute,
+                    difficulty: self::STORAGE_ENDPOINTS[$apiRoute]['difficulty'],
+                    requestMethod: self::STORAGE_ENDPOINTS[$apiRoute]['requestMethod'],
+                    payload: $payload
+                );
+            }
+        } catch (Exception $e) {
+            throw $e;
         }
     }
 
@@ -139,6 +159,39 @@ trait MakesRequests
                 return $contents ?? [$text];
             }
 
+            throw new Exception('An error has occurred');
+        } catch (Exception $e) {
+            throw new Exception($e->getMessage());
+        }
+    }
+
+    public function makeStorageRequest(
+        string $apiRoute,
+        string $requestMethod,
+        string $payload,
+        int $difficulty = 4,
+    ): array {
+        $requestId = substr(sodium_bin2hex(random_bytes(32)), 0, 32);
+        $nonce = $this->getNonce($requestId, $difficulty);
+
+        try {
+            $response = $this->http->request(
+                $requestMethod,
+                $this->storageHost . '/' . $apiRoute,
+                [
+                    'headers' => [
+                        'x-request-id' => $requestId,
+                        'x-nonce'      => $nonce,
+                    ],
+                    'json' => $payload
+                ]
+            );
+
+            if ($response->getStatusCode() === Response::HTTP_OK) {
+                $text = $response->getBody()->getContents();
+                $contents = json_decode($text, true);
+                return $contents ?? [$text];
+            }
             throw new Exception('An error has occurred');
         } catch (Exception $e) {
             throw new Exception($e->getMessage());
