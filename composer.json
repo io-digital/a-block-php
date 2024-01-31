@@ -2,6 +2,7 @@
     "name": "io-digital/a-block-php",
     "description": "Composer package for the a-block-chain",
     "type": "library",
+    "license": "MIT",
     "keywords": [
         "blockchain",
         "ablock"
