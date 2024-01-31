@@ -168,13 +168,13 @@ class ABlockClient
     }
 
     /**
-     * Creates a receipt asset at the address associated with the encrypted keypair. Returns the receipt.
+     * Creates an item asset at the address associated with the encrypted keypair. Returns the item.
      *
      * @param string     $name         - this is the name that will be merged in with supplied meta data (if any)
      * @param string     $encryptedKey - the encrypted keypair
      * @param string     $nonce        - the nonce as returned by the keypair creation
      * @param integer    $amount       - how many of these are we making
-     * @param boolean    $defaultHash  - if false, a generic receipt is created. If not, a hash that identifies this receipt will be generated
+     * @param boolean    $defaultHash  - if false, a generic item is created. If not, a hash that identifies this item will be generated
      * @param array|null $metaData     - an optional key-value array of extra info
      *
      * @return array
@@ -207,7 +207,7 @@ class ABlockClient
             ]);
 
             $payload = [
-                'receipt_amount'    => $amount,
+                'item_amount'    => $amount,
                 'script_public_key' => $address,
                 'public_key'        => sodium_bin2hex($decryptedKeypair['publicKey']),
                 'signature'         => $signature,
@@ -217,15 +217,15 @@ class ABlockClient
             ];
 
             $result = $this->makeRequest(
-                apiRoute: self::ENDPOINT_CREATE_RECEIPT_ASSET,
+                apiRoute: self::ENDPOINT_CREATE_ITEM_ASSET,
                 payload: $payload
             );
 
             return new PaymentAssetDTO(
-                assetType: PaymentAssetDTO::ASSET_TYPE_RECEIPT,
+                assetType: PaymentAssetDTO::ASSET_TYPE_ITEM,
                 amount: $amount,
-                drsTxHash: $result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_RECEIPT]['drs_tx_hash'],
-                metaData: json_decode($result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_RECEIPT]['metadata'], true)
+                drsTxHash: $result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_ITEM]['drs_tx_hash'],
+                metaData: json_decode($result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_ITEM]['metadata'], true)
             );
         } catch (\Exception $e) {
             throw $e;
@@ -325,7 +325,7 @@ class ABlockClient
         $balance = $this->fetchBalance(array_keys($myKeypairs));
 
         $amountAvailable = $myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_TOKEN ?
-            $balance['total']['tokens'] : $balance['total']['receipts'][$myAsset->getDrsTxHash()] ?? 0;
+            $balance['total']['tokens'] : $balance['total']['items'][$myAsset->getDrsTxHash()] ?? 0;
 
         if ($amountAvailable < $myAsset->getAmount()) {
             throw new Exception('Insufficient funds');
@@ -523,7 +523,7 @@ class ABlockClient
                 asset: new PaymentAssetDTO(
                     assetType: $otherPartyAssetType,
                     amount: $pendingTransaction['receiverExpectation']['asset'][$otherPartyAssetType]['amount'],
-                    drsTxHash: $otherPartyAssetType === PaymentAssetDTO::ASSET_TYPE_RECEIPT ? $pendingTransaction['receiverExpectation']['asset'][$otherPartyAssetType]['drs_tx_hash'] : null
+                    drsTxHash: $otherPartyAssetType === PaymentAssetDTO::ASSET_TYPE_ITEM ? $pendingTransaction['receiverExpectation']['asset'][$otherPartyAssetType]['drs_tx_hash'] : null
                 )
             );
 
@@ -534,7 +534,7 @@ class ABlockClient
                 asset: new PaymentAssetDTO(
                     assetType: $myAssetType,
                     amount: $pendingTransaction['senderExpectation']['asset'][$myAssetType]['amount'],
-                    drsTxHash: $myAssetType === PaymentAssetDTO::ASSET_TYPE_RECEIPT ? $pendingTransaction['senderExpectation']['asset'][$myAssetType]['drs_tx_hash'] : null
+                    drsTxHash: $myAssetType === PaymentAssetDTO::ASSET_TYPE_ITEM ? $pendingTransaction['senderExpectation']['asset'][$myAssetType]['drs_tx_hash'] : null
                 )
             );
 
@@ -602,7 +602,7 @@ class ABlockClient
                 if ($totalAmountGathered < $myAsset->getAmount()
                     && isset($outPointArr['value'][$myAsset->getAssetType()])) {
                     // TODO - similar condition for tokens ?
-                    if ($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_RECEIPT &&
+                    if ($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_ITEM &&
                         $outPointArr['value'][$myAsset->getAssetType()]['drs_tx_hash'] !== $myAsset->getDrsTxHash()) {
                         continue;
                     }
@@ -704,7 +704,7 @@ class ABlockClient
         }
 
         if (isset($asset['amount'])) {
-            return hash('sha3-256', ("Receipt:{$asset['amount']}"));
+            return hash('sha3-256', ("Item:{$asset['amount']}"));
         }
 
         return '';
