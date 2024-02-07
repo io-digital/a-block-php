@@ -159,7 +159,7 @@ class KeyHelpers
                 addressVersion: $scriptSignature['address_version']
             );
 
-            $formattedScriptString = implode('-', array_map(fn ($item) => "{$item['type']}:{$item['value']}", $scriptStack));
+            $formattedScriptString = implode('-', array_map(fn($item) => "{$item['type']}:{$item['value']}", $scriptStack));
             $previousOutpointStr = $previousOutPoint ? self::getFormattedOutPointString($previousOutPoint) : 'null';
 
             return "$previousOutpointStr-$formattedScriptString";
@@ -206,7 +206,7 @@ class KeyHelpers
                 'value' => 'OP_HASH256',
             ],
             [
-                'type'  => 'PubKeyHash',
+                'type'  => 'Bytes',
                 'value' => self::constructAddress(sodium_hex2bin($publicKeyData)),
             ],
             [

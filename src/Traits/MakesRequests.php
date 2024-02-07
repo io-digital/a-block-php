@@ -198,22 +198,6 @@ trait MakesRequests
         }
     }
 
-    // TEMP for dev
-    public function makeProxyRequest(string $command, array $payload = []): array
-    {
-        try {
-            $response = $this->http->request(
-                self::POST,
-                config('a-block.proxy_url') . "/$command",
-                ['json' => $payload]
-            );
-
-            return json_decode($response->getBody()->getContents(), true);
-        } catch (ConnectionException $e) {
-            dd($e->getMessage());
-        }
-    }
-
     private function getNonce(string $id, int $target): int
     {
         $nonce = 0;

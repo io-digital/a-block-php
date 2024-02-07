@@ -9,7 +9,6 @@ class PaymentAssetDTO
     public const ASSET_TYPE_ITEM = 'Item';
 
     public function __construct(
-        private string $assetType,
         private int $amount,
         private ?string $drsTxHash = null,
         private ?array $metaData = null
@@ -17,22 +16,15 @@ class PaymentAssetDTO
 
     public function formatForAPI(): array
     {
-        switch ($this->assetType) {
-            case self::ASSET_TYPE_TOKEN:
-                return [
-                    $this->assetType => $this->amount,
-                ];
-            case self::ASSET_TYPE_ITEM:
-                return [
-                    $this->assetType => [
-                        'amount' => $this->amount,
-                        'drs_tx_hash' => $this->drsTxHash,
-                        'metadata' => $this->metaData ? json_encode($this->metaData) : null,
-                    ],
-                ];
-            default:
-                return [];
-        }
+        return !!$this->drsTxHash ? [
+            self::ASSET_TYPE_ITEM => [
+                'amount' => $this->amount,
+                'drs_tx_hash' => $this->drsTxHash,
+                'metadata' => $this->metaData ? json_encode($this->metaData) : null,
+            ],
+        ] : [
+            self::ASSET_TYPE_TOKEN => $this->amount
+        ];
     }
 
     public function getAmount(): int
@@ -52,7 +44,7 @@ class PaymentAssetDTO
 
     public function getAssetType(): string
     {
-        return $this->assetType;
+        return !!$this->drsTxHash ? self::ASSET_TYPE_ITEM : self::ASSET_TYPE_TOKEN;
     }
 
     public function getDrsTxHash(): string
