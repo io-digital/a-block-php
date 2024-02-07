@@ -222,12 +222,11 @@ class ABlockClient
             );
 
             return new PaymentAssetDTO(
-                assetType: PaymentAssetDTO::ASSET_TYPE_ITEM,
                 amount: $amount,
                 drsTxHash: $result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_ITEM]['drs_tx_hash'],
                 metaData: json_decode($result['asset']['asset'][PaymentAssetDTO::ASSET_TYPE_ITEM]['metadata'], true)
             );
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             throw $e;
         }
     }
@@ -238,14 +237,31 @@ class ABlockClient
         PaymentAssetDTO $asset,
         string $excessAddress = null,
     ): array {
-        $payload = $this->makePaymentPayload(
-            myKeypairs: $senderKeypairs,
-            myAsset: $asset,
-            otherPartyAddress: $address,
-            excessAddress: $excessAddress
-        );
+        try {
+            $payload = $this->makePaymentPayload(
+                myKeypairs: $senderKeypairs,
+                myAsset: $asset,
+                otherPartyAddress: $address,
+                excessAddress: $excessAddress
+            );
 
-        return $this->doTransaction([($payload['createTx'])->formatForAPI()]);
+            return $this->doTransaction([($payload['createTx'])->formatForAPI()]);
+        } catch (Exception $e) {
+            throw $e;
+        }
+
+    }
+
+    public function getPaymentAssetObject(
+        int $amount,
+        ?string $hash,
+        ?array $metaData = null
+    ): PaymentAssetDTO {
+        return new PaymentAssetDTO(
+            amount: $amount,
+            drsTxHash: $hash,
+            metaData: $metaData
+        );
     }
 
     public function createTradeRequest(
@@ -324,8 +340,8 @@ class ABlockClient
     ): array {
         $balance = $this->fetchBalance(array_keys($myKeypairs));
 
-        $amountAvailable = $myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_TOKEN ?
-            $balance['total']['tokens'] : $balance['total']['items'][$myAsset->getDrsTxHash()] ?? 0;
+        $amountAvailable = (int) ($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_TOKEN ?
+            $balance['total']['tokens'] : $balance['total']['items'][$myAsset->getDrsTxHash()] ?? 0);
 
         if ($amountAvailable < $myAsset->getAmount()) {
             throw new Exception('Insufficient funds');
@@ -500,6 +516,17 @@ class ABlockClient
         );
     }
 
+    private function getAmountAndHashFromExpectation(array $expectation): array
+    {
+        return array_keys($expectation['asset'])[0] === PaymentAssetDTO::ASSET_TYPE_ITEM ? [
+            'amount' => $expectation['asset'][PaymentAssetDTO::ASSET_TYPE_ITEM]['amount'],
+            'hash' => $expectation['asset'][PaymentAssetDTO::ASSET_TYPE_ITEM]['drs_tx_hash']
+        ] : [
+            'amount' => $expectation['asset'][PaymentAssetDTO::ASSET_TYPE_TOKEN],
+            'hash' => null
+        ];
+    }
+
     private function respondToPendingTransaction(
         string $status,
         string $druid,
@@ -515,26 +542,20 @@ class ABlockClient
 
             $pendingTransaction['status'] = $status;
 
-            $otherPartyAssetType = $this->getAssetType($pendingTransaction['receiverExpectation']);
-
             $myExpectation = new PaymentExpectationDTO(
                 to: $pendingTransaction['receiverExpectation']['to'],
                 from: $pendingTransaction['receiverExpectation']['from'],
                 asset: new PaymentAssetDTO(
-                    assetType: $otherPartyAssetType,
-                    amount: $pendingTransaction['receiverExpectation']['asset'][$otherPartyAssetType]['amount'],
-                    drsTxHash: $otherPartyAssetType === PaymentAssetDTO::ASSET_TYPE_ITEM ? $pendingTransaction['receiverExpectation']['asset'][$otherPartyAssetType]['drs_tx_hash'] : null
+                    amount: $this->getAmountAndHashFromExpectation($pendingTransaction['receiverExpectation'])['amount'],
+                    drsTxHash: $this->getAmountAndHashFromExpectation($pendingTransaction['receiverExpectation'])['hash']
                 )
             );
-
-            $myAssetType = $this->getAssetType($pendingTransaction['senderExpectation']);
 
             $otherPartyExpectation = new PaymentExpectationDTO(
                 to: $pendingTransaction['senderExpectation']['to'],
                 asset: new PaymentAssetDTO(
-                    assetType: $myAssetType,
-                    amount: $pendingTransaction['senderExpectation']['asset'][$myAssetType]['amount'],
-                    drsTxHash: $myAssetType === PaymentAssetDTO::ASSET_TYPE_ITEM ? $pendingTransaction['senderExpectation']['asset'][$myAssetType]['drs_tx_hash'] : null
+                    amount: $this->getAmountAndHashFromExpectation($pendingTransaction['senderExpectation'])['amount'],
+                    drsTxHash: $this->getAmountAndHashFromExpectation($pendingTransaction['senderExpectation'])['hash']
                 )
             );
 
@@ -598,46 +619,44 @@ class ABlockClient
             $keypair = $myKeypairs[$address];
             $keypairDecrypted = $this->getDecryptedKeypair(address: $address, keypair: $keypair);
 
-            foreach ($outPoints as $outPointArr) {
-                if ($totalAmountGathered < $myAsset->getAmount()
-                    && isset($outPointArr['value'][$myAsset->getAssetType()])) {
-                    // TODO - similar condition for tokens ?
-                    if ($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_ITEM &&
-                        $outPointArr['value'][$myAsset->getAssetType()]['drs_tx_hash'] !== $myAsset->getDrsTxHash()) {
-                        continue;
-                    }
+            $outPointIndex = -1;
 
-                    $signableData = $this->getSignableAssetHash($outPointArr['out_point']);
+            while($totalAmountGathered < $myAsset->getAmount() && $outPointIndex < count($outPoints)) {
+                $outPointIndex++;
+                $outPointArr = $outPoints[$outPointIndex];
 
-                    $signature = KeyHelpers::createSignature($signableData, $keypairDecrypted['secretKey']);
+                // This outpoint doesn't have what we want
+                if(!isset($outPointArr['value'][$myAsset->getAssetType()]) ||
+                    ($myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_ITEM &&
+                    $outPointArr['value'][$myAsset->getAssetType()]['drs_tx_hash'] !== $myAsset->getDrsTxHash())) {
+                    continue;
+                }
 
-                    array_push($inputs, [
-                        'script_signature' => ['Pay2PkH' => [
-                            'signable_data'   => $signableData ?? '',
-                            'signature'       => $signature,
-                            'public_key'      => sodium_bin2hex($keypairDecrypted['publicKey']),
-                            'address_version' => $addressVersion,
-                        ]],
-                        'previous_out' => $outPointArr['out_point'],
-                    ]);
+                $signableData = $this->getSignableAssetHash($outPointArr['out_point']);
 
-                    $thisAmount = isset($outPointArr['value'][$myAsset->getAssetType()]['amount']) ?
-                        $outPointArr['value'][$myAsset->getAssetType()]['amount'] : $outPointArr['value'][$myAsset->getAssetType()];
+                $signature = KeyHelpers::createSignature($signableData, $keypairDecrypted['secretKey']);
 
-                    $thisAmount = $outPointArr['value'][$myAsset->getAssetType()]['drs_tx_hash'] !== $myAsset->getDrsTxHash() ?
-                        0 : $outPointArr['value'][$myAsset->getAssetType()]['amount'];
+                array_push($inputs, [
+                    'script_signature' => ['Pay2PkH' => [
+                        'signable_data'   => $signableData ?? '',
+                        'signature'       => $signature,
+                        'public_key'      => sodium_bin2hex($keypairDecrypted['publicKey']),
+                        'address_version' => $addressVersion,
+                    ]],
+                    'previous_out' => $outPointArr['out_point'],
+                ]);
 
-                    $totalAmountGathered += $thisAmount;
+                $totalAmountGathered += $myAsset->getAssetType() === PaymentAssetDTO::ASSET_TYPE_ITEM ? $outPointArr['value'][$myAsset->getAssetType()]['amount'] :
+                    $outPointArr['value'][$myAsset->getAssetType()];
 
-                    if (! in_array($address, $usedAddresses)) {
-                        array_push($usedAddresses, $address);
-                    }
+                if (! in_array($address, $usedAddresses)) {
+                    array_push($usedAddresses, $address);
+                }
 
-                    $usedOutpointsCount++;
+                $usedOutpointsCount++;
 
-                    if (count($outPoints) == $usedOutpointsCount) {
-                        array_push($depletedAddresses, $address);
-                    }
+                if (count($outPoints) == $usedOutpointsCount) {
+                    array_push($depletedAddresses, $address);
                 }
             }
         }
@@ -661,11 +680,6 @@ class ABlockClient
         );
 
         return $result;
-    }
-
-    private function getAssetType(array $expectation): string
-    {
-        return array_keys($expectation['asset'])[0];
     }
 
     private function getDecryptedKeypair($address, $keypair): array
